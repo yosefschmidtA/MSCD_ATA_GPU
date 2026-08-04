@@ -8,14 +8,35 @@ fábrica: tem uma extensão **ATA** da UNICAMP (`Mscdrun::ATAevenelem`,
 Repositório: <https://github.com/yosefschmidtA/MSCD_ATA_GPU>. **O git é do
 usuário** — não rode `add`, `commit`, `tag` nem `push`; entregue o comando pronto.
 
-**Antes de abrir qualquer `.cpp`, leia estes dois** — eles existem justamente
+**Antes de abrir qualquer `.cpp`, leia estes** — eles existem justamente
 para economizar leitura de código:
 
+- **`OTIMIZACAO.md`** — **o mais atual, comece por aqui**. Abre com a seção
+  **COMO CONTINUAR**, que diz em que estado o código está, qual é a próxima ação
+  pendente e o que já foi decidido e não deve ser refeito. Depois: diagnóstico,
+  o que mudou em cada versão, medições por fase, escalabilidade, e os resultados
+  negativos com o motivo.
+- **`baseline/README.md`** — a linha de base congelada e o critério de validação
+  (`baseline/regressao.sh`: as 787 linhas de intensidade têm de sair idênticas
+  byte a byte).
 - **`README.md`** — caderno de laboratório. A fatoração caro/barato da eq. (46)
   que organiza o programa inteiro, o grafo das equações, onde está (e onde não
-  está) o paralelismo, e as medições.
+  está) o paralelismo. **Atenção: os números dele são da configuração antiga**
+  (profundidade 15, 205 átomos) e a descrição das fases do `symtrivert` é do
+  código antes da reescrita.
 - **`EQUACOES.md`** — as ~40 equações do manual (`MANUAL_MSCD_CEA.pdf`) mapeadas
   para arquivo:linha, nos dois sentidos.
+
+## Estado atual (04/08/2026)
+
+Cluster de trabalho: **raio 9 / profundidade 20, 247 átomos** (`Cov0.txt`).
+`symtrivert` reescrito (fase C redundante eliminada, hash no lugar da busca
+linear, `std::sort` no lugar dos *selection sorts*): **20,87 → 1,59 s**, total
+**70 → 48,4 s** com `-np 6`, curva idêntica byte a byte. Tudo isso é **otimização
+serial**; nenhum paralelismo novo foi introduzido.
+
+Compilar com `-DMSCDTIMER` liga cronômetros de fase que imprimem em stderr
+(`mscdtimer.h`); sem a macro não sobra instrução nenhuma.
 
 O único executável usado é o **`randmscd_parallel`**. O `makefile` constrói outros
 doze; estão compilados e funcionando, e não interessam.

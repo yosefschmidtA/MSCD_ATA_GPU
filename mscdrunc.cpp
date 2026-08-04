@@ -16,6 +16,7 @@
 #include "jobtime.h"
 #include "userutil.h"
 #include "mscdrun.h"
+#include "mscdtimer.h"
 
 //beta unit: degree
 Fcomplex Mscdrun::evenelem(int akind,int ma,int na,int mb,int nb,
@@ -289,6 +290,7 @@ int Mscdrun::precutable()
   Fcomplex *asum,*bsum;
   Fcomplex cxa;
 
+  MSCDT_DECL;
   Textout conout;
   if (error==0)
   { if (dispmode>4)
@@ -301,6 +303,7 @@ int Mscdrun::precutable()
     if (error==0)
       error=vibrate->loadparameter(density,mweight,tdebye,tsample);
   }
+  MSCDT("  precut vibracionais");
   if (error==0)
   { if (dispmode>4)
       conout.string("calculating rotational matrices ...",0,1);
@@ -315,6 +318,7 @@ int Mscdrun::precutable()
     if (error==0) error=evenmat->makecurve();
     if (error==0) error=termmat->makecurve();
   }
+  MSCDT("  precut rotacionais");
   if (error==0)
   { if (dispmode>4)
       conout.string("calculating spherical expension coefficients ...",
@@ -369,7 +373,9 @@ int Mscdrun::precutable()
     if ((displog>0)&&(flogout))
       flogout->string("setting up pre-cut table ...",0,2);
     akin=kmin;
+    MSCDT("  precut esfericas+cortes");
     error=alltrievent(1,akin);
+    MSCDT("  precut alltrievent");
   }
   pemeven=0.0f;
   if ((error==0)&&(pathcut>0.0))
@@ -395,6 +401,13 @@ int Mscdrun::precutable()
     { for (ic=0;ic<natoms;++ic) bsum[ib*natoms+ic]=1.0f/pemeven;
     }
   }
+  /* A ordem (ib,ic,ia) parece ruim -- o indice e' id=ia*natoms^2+..., entao
+     cada passo de ia salta natoms^2 = 244 KB dentro de tevenadd/tevendim.
+     MEDIDO: inverter para (ia,ib,ic) deixa 27% MAIS LENTO (8,6 s -> 10,9 s).
+     O motivo e' que xa e cxa vivem em registrador durante todo o laco de ia;
+     com ia por fora eles viram acumuladores em memoria, e as 105 milhoes de
+     iteracoes passam a fazer load+store. Nao inverta sem medir de novo.
+     Detalhes em OTIMIZACAO.md, secao "V3". */
   for (m=2;(error==0)&&(m<=msorder);++m)
   { for (ib=0;ib<natoms;++ib)
     { for (ic=0;ic<natoms;++ic) asum[ib*natoms+ic]=bsum[ib*natoms+ic];
@@ -459,6 +472,7 @@ int Mscdrun::precutable()
     }
   }
 
+  MSCDT("  precut pathcut msorder x natoms^3");
   for (j=0;(error==0)&&(j<ntrieven);++j) tevenpar[j*10+5]=0.0f;
   for (j=0;(error==0)&&(j<21*21);++j) stat[j]=0.0f;
   for (m=2;(error==0)&&(m<=msorder);++m)
@@ -636,6 +650,7 @@ int Mscdrun::precutable()
     if (!fithist) error=102;
   }
 
+  MSCDT("  precut estatisticas+alocacoes");
   return(error);
 } //end of Mscdrun::precutable
 

@@ -1,7 +1,8 @@
 # Linha de base — Ag(111), raio 9 / profundidade 20
 
 > Campanha de otimização e resultados por versão: **`../OTIMIZACAO.md`**.
-> `v1/` guarda a curva, o log e o fonte da versão V1 (55,6 s, curva idêntica).
+> `v1/` e `v2/` guardam curva, log e fonte de cada versão (55,6 s e 48,4 s,
+> curvas idênticas). Figura: `antes-depois.png`, gerada por `figura.py`.
 
 Referência congelada em 04/08/2026 para validar qualquer otimização do
 `symtrivert` ("Analyzing/Reanalyzing") e do resto do preparo serial.
@@ -44,6 +45,21 @@ modificação. `mpirun --use-hwthread-cpus -np 6`.
 
 Dispersão de 3% entre rodadas: **ganho abaixo de ~5% é ruído**, não conclua nada
 com uma rodada só.
+
+## Como medir sem se enganar
+
+Três erros cometidos nesta campanha, todos com custo real de tempo:
+
+1. **Máquina ocupada.** Uma rodada de `np=1` levou 897 s em vez de 150 s porque
+   outro processo usava a CPU — 6,0×, exatamente a razão esperada. Confira com
+   `ps -eo args | grep -cE "^mpirun|^randmscd"` **antes** de medir; tem de dar 0.
+   E não dispare dois trabalhos de medição sobrepostos (eu disparei).
+2. **Deriva sob carga contínua.** Depois de ~1,5 h medindo, a mesma versão sem
+   mudança de código passou de 48,4 s para 56,5 s (~15%). **Só compare medições
+   feitas na mesma janela**, ou deixe a máquina descansar antes de uma campanha.
+3. **Buffer de saída não é progresso.** `stdout` redirecionado para arquivo é
+   bufferizado em bloco; o arquivo fica muito atrás do programa. Não conclua
+   "travou" olhando o arquivo parar de crescer.
 
 ## Onde vão os 70 s
 

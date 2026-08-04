@@ -8,6 +8,27 @@ Esta tag `v0` é o código **como recebido**, compilando e rodando em g++ 13 /
 Open MPI 4.1.6, reproduzindo a saída de referência. É a linha de base contra a
 qual o port de GPU vai ser medido e validado.
 
+> ### ⚠ Este documento descreve o estado V0. O código já andou.
+>
+> Desde 04/08/2026 o cluster de trabalho é **raio 9 / profundidade 20**
+> (247 átomos), não o de profundidade 15 (205 átomos) que gerou **todos os
+> números deste arquivo**. E o `symtrivert` foi reescrito: a varredura
+> redundante `natoms³` da fase C não existe mais, a busca linear no balde virou
+> hash, e os *selection sorts* viraram `std::sort`.
+>
+> **Medições atuais, versão por versão, e o que mudou no código:
+> [`OTIMIZACAO.md`](OTIMIZACAO.md).** Critério de validação e linha de base
+> congelada: [`baseline/README.md`](baseline/README.md).
+>
+> Resumo: `symtrivert` 20,87 → 1,59 s, total 70 → 48,4 s, curva idêntica byte a
+> byte. **Tudo isso é otimização serial** — nenhum paralelismo novo foi
+> introduzido; o laço dos 779 pontos continua exatamente como estava.
+>
+> O que continua valendo deste arquivo: a fatoração caro/barato da eq. (46), o
+> grafo das equações, a descrição da arquitetura de paralelismo e as armadilhas.
+> O que não vale mais: os tempos, as contagens de átomos e trios, e a descrição
+> das fases do `symtrivert`.
+
 ## Compilar e rodar
 
 ```bash
