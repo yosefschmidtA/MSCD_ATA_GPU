@@ -55,18 +55,125 @@ Liga-se pela linha do arquivo de entrada:
 No `Cov0.txt` desta linha de base o ATA está **desligado** (`ATA=0`), de modo que
 os números medidos abaixo são do caminho de cálculo comum.
 
-## A física, e onde ela está no código
+## A fatoração que organiza o programa inteiro
 
-O `EQUACOES.md` mapeia as ~40 equações do manual (`MANUAL_MSCD_CEA.pdf`) para
-arquivo e linha, nos dois sentidos. Comece por lá antes de abrir qualquer
-`.cpp` — o código chama as coisas de `cxa`, `algam` e `tevenelem`; o manual
-chama de Γ, F e t_l, e nada nos dois liga um ao outro.
+> O **`EQUACOES.md`** mapeia as ~40 equações do manual (`MANUAL_MSCD_CEA.pdf`)
+> para arquivo e linha, nos dois sentidos. Comece por lá antes de abrir qualquer
+> `.cpp`: o código chama as coisas de `cxa`, `algam` e `tevenelem`; o manual
+> chama de Γ, F e t_l, e nada nos dois liga um ao outro.
 
-O eixo é a eq. (46)–(47) do manual: a matriz de amplitude de espalhamento se
-fatora numa parte cara que **não** depende da orientação absoluta do par de
-vetores (só de \|ρ\|, \|ρ'\| e do ângulo β) e num par de fases barato que carrega
-toda a orientação. É disso que sai a arquitetura inteira do programa — inclusive
-a existência da fase serial gorda que o resto deste documento mede.
+Há uma única ideia no centro do MSCD, e ela está na eq. (46) do manual (pág. 36).
+A matriz de amplitude de espalhamento — o objeto que aparece uma vez para cada
+trio (emissor, espalhador, receptor) em cada caminho de cada ordem — **se
+fatora**:
+
+$$F_{\lambda\lambda'}(\boldsymbol{\rho},\boldsymbol{\rho}') \;=\; \underbrace{e^{-i\mu\alpha}}_{\text{barato}} \;\cdot\; \underbrace{f_{\lambda\lambda'}(\rho,\rho',\beta)}_{\text{caro}} \;\cdot\; \underbrace{e^{-i\mu'\gamma}}_{\text{barato}}$$
+
+com
+
+$$f_{\lambda\lambda'}(\rho,\rho',\beta) \;=\; e^{-\frac{a'}{2\lambda} - k^2(1-\cos\beta)\sigma_c^2} \;\frac{e^{i\rho'}}{\rho'}\; \sum_l t_l \, \gamma^l_{\mu\alpha}(\rho) \, d^l_{\mu\mu'}(\beta) \, \tilde\gamma^l_{\mu'\nu'}(\rho')$$
+
+O que distingue os dois lados **não é o tamanho da conta, é de que a conta
+depende**:
+
+| | depende de | quantos objetos distintos |
+|---|---|---|
+| **caro** — `f` | só dos dois comprimentos de ligação e do ângulo β entre eles | **494 297** |
+| **barato** — as fases | dos ângulos de Euler α e γ, isto é, da **orientação absoluta** do par no espaço | 8 615 125 |
+
+Gire um trio de átomos rigidamente no espaço: `f` não muda, só as fases mudam.
+Como `f` carrega a soma sobre momento angular, as matrizes de Wigner, os
+deslocamentos de fase `t_l`, o livre caminho médio e o Debye–Waller, e as fases
+são uma exponencial de tabela — a assimetria de custo é enorme.
+
+Daí sai **tudo**:
+
+- **Por que existe uma fase serial gorda.** Alguém precisa varrer os 205³ = 8,6
+  milhões de trios, reduzi-los às 494 297 assinaturas distintas e calcular `f`
+  uma vez para cada. É o `symtrivert` + `precutable` + `alltrievent` — os ~16 s
+  que não escalam com `-np`.
+- **Por que ela é difundida, e não recalculada.** O resultado é uma tabela de
+  ~190 MB. Cada rank recebe uma cópia inteira via `sendjobs`.
+- **Por que o laço paralelo é barato por ponto.** Ele só aplica as fases e soma.
+- **Por que o fator de economia é 17**, e não mais: é 8 615 125 / 494 297.
+
+### O grafo das equações
+
+Cada nó é uma equação do manual; a cor diz **quantas vezes ela roda**. A eq. (46)
+é a fronteira: tudo à esquerda dela é pago uma vez, tudo à direita é pago 3895
+vezes.
+
+```mermaid
+flowchart TB
+    GEO["<b>Geometria do aglomerado</b><br/>205 átomos → 8 615 125 trios"]
+
+    E23["<b>(23)</b> assinatura do trio: a', a, cos β<br/><i>1× serial</i> · symtrivert"]
+    SYM["<b>8 615 125 → 494 297</b><br/>trios geometricamente distintos<br/><i>fator 17</i> · ~9 s"]
+
+    ING["<b>Ingredientes de f</b><br/>(t_l) desloc. de fase · phase.cpp:294<br/>(10)(20) Hankel γ, γ̃ · msfuncs.cpp:108<br/>(14)–(17) Wigner d_μμ'(β) · rotamat.cpp:175<br/>(27)(28) TPP-2 λ(E) · meanpath.cpp:143<br/>(31)(32) Debye–Waller σ_c² · vibrate.cpp:149"]
+
+    E47["<b>(47) f_λλ'(ρ, ρ', β)</b><br/>A PARTE CARA<br/><i>1× por energia</i> · alltrievent → tevenelem"]
+    PC["<b>pathcut</b> → tevencut, tevendim<br/>dimensão R-A adaptativa: 1, 3, 6, 10 ou 15<br/><i>1× serial</i> · ~7 s"]
+
+    E24["<b>(24)</b> ângulos de Euler α, γ<br/>um par por trio <b>real</b> — 8,6 M pares<br/><i>1× serial</i> · onerotation<br/>talpha[], tgamma[] · 34 MB cada"]
+
+    E46{{"<b>(46)</b><br/>F = e^−iμα · f(ρ,ρ',β) · e^−iμ'γ<br/>montada <b>3895×</b> em summation<br/>mscdrund.cpp:112"}}
+
+    E12["<b>(12)(42)</b> série de espalhamento múltiplo<br/>msorder = 8 · summation<br/><i>3895× — o laço paralelo</i>"]
+    E3637["<b>(36)(37)</b> potencial interno<br/>kinside · thetainside"]
+    E4["<b>(4)(1)</b> I ∝ ‖φ₀ + Σφ_sj‖²"]
+    E38["<b>(38)</b> média sobre a abertura<br/>(2Iₐ + I_b + I_c + I_d + I_e)/6"]
+    CHI["<b>χ = I/I₀ − 1</b><br/>a observável"]
+    E41["<b>(41)</b> fator-R = Σ(χ_c−χ_e)²/(χ_c²+χ_e²)<br/>0,6724   0,8647"]
+
+    GEO --> E23 --> SYM --> E47
+    ING --> E47
+    E47 --> PC
+    GEO --> E24
+    E47 ==>|"invariante por rotação"| E46
+    E24 ==>|"carrega a orientação"| E46
+    E46 ==> E12
+    PC -.->|"quais caminhos sobrevivem"| E12
+    E3637 --> E12
+    E12 --> E4 --> E38 --> CHI --> E41
+
+    classDef serial fill:#1b4965,stroke:#5fa8d3,stroke-width:2px,color:#fff
+    classDef caro fill:#5f0f40,stroke:#c77dff,stroke-width:3px,color:#fff
+    classDef paralelo fill:#7f4f24,stroke:#e5989b,stroke-width:2px,color:#fff
+    classDef hub fill:#0b3d2e,stroke:#95d5b2,stroke-width:4px,color:#fff
+    classDef neutro fill:#33415c,stroke:#8d99ae,stroke-width:1px,color:#fff
+    class E23,SYM,ING,PC,E24 serial
+    class E47 caro
+    class E12,E3637,E4,E38 paralelo
+    class E46 hub
+    class GEO,CHI,E41 neutro
+```
+
+**Azul** = pago uma vez, serial, só no rank 0 — os ~16 s que não escalam.
+**Roxo** = a parte cara, uma vez por energia. **Verde** = a fatoração.
+**Laranja** = pago 3895 vezes, o laço paralelo.
+
+Repare que **os dois lados da eq. (46) são pré-calculados na fase serial**: `f`
+uma vez por assinatura distinta, os ângulos α e γ uma vez por trio real. O que
+se repete 3895 vezes é só *montar* o produto e somar a série. Tudo que dava para
+pré-calcular já foi pré-calculado em 1997 — é por isso que o laço quente é
+limitado por banda de memória e não por aritmética, como as medições mostram.
+
+O `EQUACOES.md` destrincha cada nó: a equação, o arquivo e a linha.
+
+### O que isso diz para a GPU
+
+A fronteira do grafo é a fronteira do trabalho. Do lado direito estão os 3895
+solves independentes — é o que vale portar. Mas repare que o lado esquerdo
+**não** é preparação trivial: são 16 s de `natoms³` com deduplicação por hash e
+uma varredura de esparsidade, hoje inteiramente sequenciais. Com o laço a zero,
+o programa ainda levaria esses 16 s.
+
+E a eq. (46) impõe uma restrição concreta ao formato dos dados: `tevenelem`
+(o lado caro) é indexado por **assinatura geométrica**, enquanto `talpha`/`tgamma`
+(o lado barato) são indexados por **trio real**. São dois espaços de índice
+diferentes, ligados pela indireção `tevenadd[ia][ib][ic]`. Todo acesso no laço
+quente passa por essa indireção — é ela, e não a aritmética, que domina o tempo.
 
 ## O que o programa calcula
 
