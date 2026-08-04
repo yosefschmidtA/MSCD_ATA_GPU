@@ -6,6 +6,7 @@
 #include "userinfo.h"
 #include "mscdrun.h"
 #include "mscdjob.h"
+#include "mscdtimer.h"
 
 Mscdjob::Mscdjob(int imype,int inumpe)
 { mype=imype; numpe=inumpe;
@@ -393,6 +394,7 @@ int Mscdjob::execute(char *usermessage)
     }
     if (error==0)
     { Mscdrun *mscdrun=new Mscdrun(mype,numpe);
+      MSCDT_DECL;
       if (!mscdrun) error=102;
       if (mype==0)
       { mscdrun->init();
@@ -405,12 +407,16 @@ int Mscdjob::execute(char *usermessage)
           error=mscdrun->paradisp();
         if (error==0)
           error=mscdrun->paradisplog();
+        MSCDT("-- ate readparameter");
         if (error==0)
           error=mscdrun->symtrivert();
+        MSCDT("symtrivert TOTAL");
         if (error==0)
           error=mscdrun->symdblvert();
+        MSCDT("symdblvert");
         if (error==0)
           error=mscdrun->precutable();
+        MSCDT("precutable");
         if (error==0)
         { xa=mscdrun->getmemory();
           if (basemem<xa) basemem=xa;
@@ -422,10 +428,12 @@ int Mscdjob::execute(char *usermessage)
         mscdrun->sendjobs();
       else if (numpe>1)
         error=mscdrun->receivejobs();
+      MSCDT("sendjobs/receivejobs");
       if (error==0)
         error=mscdrun->assistant(1);
       if ((error==0)&&(mype==0))
         error=mscdrun->fitarpefs(mscdrun);
+      MSCDT("laco dos 779 pontos");
       if ((error==0)&&(mype==0))
         error=mscdrun->assistant(0);
       if ((error==0)&&(mype==0))
