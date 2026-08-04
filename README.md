@@ -55,6 +55,19 @@ Liga-se pela linha do arquivo de entrada:
 No `Cov0.txt` desta linha de base o ATA está **desligado** (`ATA=0`), de modo que
 os números medidos abaixo são do caminho de cálculo comum.
 
+## A física, e onde ela está no código
+
+O `EQUACOES.md` mapeia as ~40 equações do manual (`MANUAL_MSCD_CEA.pdf`) para
+arquivo e linha, nos dois sentidos. Comece por lá antes de abrir qualquer
+`.cpp` — o código chama as coisas de `cxa`, `algam` e `tevenelem`; o manual
+chama de Γ, F e t_l, e nada nos dois liga um ao outro.
+
+O eixo é a eq. (46)–(47) do manual: a matriz de amplitude de espalhamento se
+fatora numa parte cara que **não** depende da orientação absoluta do par de
+vetores (só de \|ρ\|, \|ρ'\| e do ângulo β) e num par de fases barato que carrega
+toda a orientação. É disso que sai a arquitetura inteira do programa — inclusive
+a existência da fase serial gorda que o resto deste documento mede.
+
 ## O que o programa calcula
 
 Entrada `Cov0.txt`: Ag(111) fcc, `natoms=205` átomos no aglomerado, `msorder=8`
