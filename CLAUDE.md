@@ -1,8 +1,21 @@
 # MSCDATA — mapa do projeto
 
 **MSCD 1.37** (Van Hove / LBNL, 1997-98): difração e dicroísmo de fotoelétrons.
-C++ antigo, 69 arquivos, ~19 mil linhas, paralelo por MPI. **Não é repo git** —
-faça backup antes de mexer.
+C++ antigo, 69 arquivos, ~19 mil linhas, paralelo por MPI. Não é o MSCD de
+fábrica: tem uma extensão **ATA** da UNICAMP (`Mscdrun::ATAevenelem`,
+`mscdrunc.cpp:45`), desligada no `Cov0.txt` (`ATA=0`).
+
+Repositório: <https://github.com/yosefschmidtA/MSCD_ATA_GPU>. **O git é do
+usuário** — não rode `add`, `commit`, `tag` nem `push`; entregue o comando pronto.
+
+**Antes de abrir qualquer `.cpp`, leia estes dois** — eles existem justamente
+para economizar leitura de código:
+
+- **`README.md`** — caderno de laboratório. A fatoração caro/barato da eq. (46)
+  que organiza o programa inteiro, o grafo das equações, onde está (e onde não
+  está) o paralelismo, e as medições.
+- **`EQUACOES.md`** — as ~40 equações do manual (`MANUAL_MSCD_CEA.pdf`) mapeadas
+  para arquivo:linha, nos dois sentidos.
 
 O único executável usado é o **`randmscd_parallel`**. O `makefile` constrói outros
 doze; estão compilados e funcionando, e não interessam.
@@ -11,7 +24,7 @@ doze; estão compilados e funcionando, e não interessam.
 
 ```bash
 make randmscd_parallel CPPFLAGS="-O3 -std=c++98 -w -fpermissive"
-mpirun --use-hwthread-cpus -np 10 randmscd_parallel Cov0.txt
+mpirun --use-hwthread-cpus -np 6 randmscd_parallel Cov0.txt
 ```
 
 As duas flags são obrigatórias, não preferência:
@@ -23,9 +36,26 @@ As duas flags são obrigatórias, não preferência:
   i5-13420H), não threads (12), e desde a série 3.x recusa superalocar em vez de
   aceitar calado como a 1.10 fazia. Sem ela, `-np 10` morre em "not enough slots".
 
-Medido em 04/08/2026: `-np 10` = **41,4 s**, `-np 6` = 45,2 s. Os 4 ranks extras
-rendem 8% — escala quase linear até 6 e satura. Referência de saída correta:
-`factors = 0.6724 0.8647`, resultado em `saida1Co-alterado-alexandre.txt`.
+Referência de saída correta: `factors = 0.6724 0.8647`, curva em
+`saida1Co-alterado-alexandre.txt`.
+
+**Use `-np 6`, não `-np 10`.** Medido em 04/08/2026 com build instrumentado e
+saída redirecionada para arquivo (imprimir no terminal custa ~10 s):
+
+| `-np` | preparo serial | laço dos 779 pontos | total |
+|------:|---------------:|--------------------:|------:|
+| 1 | 15,6 s | 84,2 s | 99,8 s |
+| 2 | 14,8 s | 41,9 s | 56,9 s |
+| 6 | 16,1 s | 25,0 s | **41,4 s** |
+| 10 | 22,0 s | 21,9 s | 44,0 s |
+
+`-np 10` **perde** para `-np 6`: os 9 ranks ociosos giram em espera ocupada
+(92–98% de CPU com 15 MB residentes, antes de receberem o job de 190 MB) e roubam
+ciclos do rank 0 durante o preparo serial. Fração serial 15,6% ⇒ teto de Amdahl
+6,4×. Detalhes e método no `README.md`.
+
+*(Uma versão anterior deste arquivo dizia `-np 10` = 41,4 s e `-np 6` = 45,2 s.
+Está errado — foi medido com saída no terminal e sem separar as fases.)*
 
 ## Arquitetura do paralelismo
 
@@ -47,6 +77,10 @@ Foi ela que permitiu trocar de versão de MPI sem tocar em cálculo nenhum.
 
 ## Armadilhas
 
+- **O `makefile` linka `mscdrunb_not_reanalize.o`, não `mscdrunb.o`.** O binário
+  usa a variante modificada pelo Abner (tolerância de deduplicação geométrica de
+  0,001 → 0,005 Å, limiar `natoms>100` → `>333`). **Editar `mscdrunb.cpp` não tem
+  efeito nenhum no executável.** `diff` entre os dois mostra tudo.
 - **`usercomp.cpp` e `usert3e.cpp` são cópias byte a byte** do `userCluster.cpp`.
   Os nomes sugerem variantes de plataforma; não são. Não compare os três.
 - **O `core` na raiz é pista falsa**: ELF 32-bit i386, e o binário é x86-64. Veio
@@ -66,7 +100,9 @@ Foi ela que permitiu trocar de versão de MPI sem tocar em cálculo nenhum.
 Cobertura de `calls` é **parcial**: `mpisend()` aparece com grau 1 e é chamado 6×
 de `mscdjob.cpp`. Grafo para orientar, `grep` para confirmar, `Read` estreito.
 
-## Backups de 04/08/2026 (nada apagado)
+## Backups
 
-`backup-original-20260804.tar.gz` (binários e `.o` originais, `tar xzf` restaura)
-e `.obj-antigos/` (os 40 `.o` da máquina antiga).
+`backup-original-20260804.tar.gz` e `.obj-antigos/` **não estão mais neste
+diretório** (verificado em 04/08/2026). Se precisar dos binários originais,
+procure em outro lugar antes de assumir que existem aqui. O código-fonte está
+versionado no GitHub desde a tag/commit inicial, então o risco real é baixo.
