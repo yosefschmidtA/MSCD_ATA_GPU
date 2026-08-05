@@ -21,39 +21,49 @@ profundidade 20, 247 átomos.
 - **`baseline/randmscd_parallel.baseline` é o binário V0 original preservado.**
   Não recompile por cima; é a referência de comparação.
 - Validação de qualquer mudança: `./baseline/regressao.sh [np]` — as 787 linhas
-  de intensidade têm de sair idênticas byte a byte.
+  de intensidade têm de sair idênticas byte a byte. **A referência atual está
+  obsoleta** (foi gerada em k = 16,00): ver "O k errado".
+- **A configuração mudou**: `ps01` agora é `psAg111.txt` (k 13,63, `lnum=20`). A
+  anterior está em `Cov0.txt.k16-slab.bak`. **Nenhum número medido antes de
+  04/08/2026 20:47 é comparável com os de depois.**
 
-### Próxima ação: campanha de medição a frio
+### Feito: campanha de medição a frio
 
-Foi a última coisa pedida e **ainda não foi feita**. A máquina foi deixada
-esfriando de propósito.
+Rodada em 04/08/2026 20:47, com a configuração corrigida. Resultados na seção
+"Escalabilidade". Em uma linha: **`-np 4`, V2 em 49,84 s contra 64,26 s do V0
+(1,29×)**, reprodutibilidade de 0,4% nos pontos de `np` baixo.
 
 ```bash
-./baseline/campanha.sh          # 2 repetições, pausa de 45 s, ~55 min
+./baseline/campanha.sh          # 2 repetições, pausa de 45 s, ~72 min
 ```
 
-O script já embute as três precauções que esta campanha aprendeu na marca: aborta
-se achar outro `mpirun`/`randmscd` rodando, descarta uma rodada de aquecimento, e
-pausa entre medições. Ele grava `baseline/escala.csv` e chama `baseline/escala.py`,
-que regenera `baseline/escalabilidade.png`.
+O script embute as precauções que custaram tempo real: aborta se achar outro
+`mpirun`/`randmscd` rodando, descarta uma rodada de aquecimento, e pausa entre
+medições. Grava `baseline/escala.csv` e chama `baseline/escala.py`, que regenera
+`baseline/escalabilidade.png`. **Rodar com a máquina fria** — a campanha limpa
+começou com `load 0.04`, e é a isso que se deve a dispersão de 0,4%.
 
-**Depois de rodar**: substituir a tabela da seção "Escalabilidade" por estes
-números novos e apagar a ressalva de que os pontos misturam condições. Os
-números que estão lá hoje **não são de campanha limpa** — `np=1` foi medido
-isolado e os demais vieram de um estudo com contenção e deriva.
+### Próximas ações, nesta ordem
 
-### Depois disso, nesta ordem
-
-1. **`precutable` com profiling de verdade.** É o maior item serial (9,7 s de
-   13,1 s), e 82% dele está num laço só. **Não otimizar por leitura**: dois
-   palpites meus já foram derrubados pela medição (a fase C, que eu estimei
-   igual à A e era o dobro; e o V3, que eu previ mais rápido e ficou 13% mais
-   lento). Usar `perf stat -e cache-misses,LLC-load-misses` antes de propor
-   qualquer transformação.
-2. **Paralelizar o que sobrar do serial** — ver "Depois do V2". Só depois de
-   entender onde o tempo vai.
-3. **`sendjobs` sem `MPI_Bcast`** (`mscdrun.cpp:502`): envia ~190 MB num laço
-   ponto a ponto, custo ∝ número de ranks. 0,94 s com 6, ~10 s com 64. É o
+1. **Regerar a base de regressão.** Sem isso o `regressao.sh` acusa diferença em
+   toda mudança, porque a referência é de k = 16,00. É o primeiro passo, antes de
+   mexer em qualquer código.
+2. **Fechar o bug do `phase.cpp`.** `if (i<1) i=1` na linha 313 (o guarda atual é
+   código morto) e um limite de iteração nos quatro `while` de 320-325. Hoje o bug
+   está sem gatilho, não corrigido — ver "O `np=1` que não terminava".
+3. **Descobrir por que o laço paralelo perde 44%.** Mudou de prioridade: com o
+   serial em 11,4% o teto de Amdahl é 8,8×, mas o medido é 2,72×, porque o laço
+   escala 3,4× em 6 ranks. **Continuar cortando serial rende pouco agora.**
+   Instrumentar o laço por `np` antes de propor qualquer coisa.
+4. **`precutable` com profiling de verdade.** Segue sendo o maior item serial
+   (9,7 s de 13,1 s na config antiga; 13,2 s de 15,5 s na nova), 82% num laço só.
+   **Não otimizar por leitura**: dois palpites já foram derrubados pela medição (a
+   fase C, que eu estimei igual à A e era o dobro; e o V3, que eu previ mais
+   rápido e ficou 13% mais lento). Usar `perf stat -e
+   cache-misses,LLC-load-misses` antes de propor transformação. *(`perf` não está
+   instalado nesta máquina — verificado em 04/08/2026.)*
+5. **`sendjobs` sem `MPI_Bcast`** (`mscdrun.cpp:502`): envia ~190 MB num laço
+   ponto a ponto, custo ∝ número de ranks. 0,97 s com 6, ~10 s com 64. É o
    defeito que mais atrapalha em máquina grande.
 
 ### Regras de medição (custaram tempo real para aprender)
@@ -77,12 +87,62 @@ progresso.
 Linha de base, critério de validação e medições por fase: **`baseline/README.md`**.
 Mapa das equações: `EQUACOES.md`. Arquitetura geral: `README.md`.
 
+## O k errado — achado de física, 04/08/2026
+
+Encontrado ao investigar o travamento do `np=1`, e não tem nada a ver com
+otimização: **o programa vinha rodando na energia errada.**
+
+`Cov0.txt` pede k = 13,63 Å⁻¹. O log dizia `16.00 16.00 0.00  kmin kmax kstep`.
+
+A causa é o `kconfine` (`phase.cpp:419`), que eleva o `kmin` até o primeiro ponto
+tabelado do phase shift: `if (*kmin<xa) *kmin=xa` com `xa=phasea[0]`. O `ps01`
+era `psAg111-slab.txt`, que cobre **k 16,00–18,00** — faixa do Ag 3d, não do
+Co 2p. Então o k era levantado em silêncio, sem aviso no log nem código de erro.
+
+Que 13,63 é o valor correto se verifica por dois caminhos independentes:
+
+- **Cinemática.** `linitial=1` ⇒ `"2p"` (`mscdruna.cpp:405`). Co 2p₃∕₂ (BE 778,1
+  eV) com Al Kα (1486,6 eV) dá KE = 708,5 eV ⇒ k = 0,512331·√708,5 = **13,637**.
+- **O dado experimental.** `Cobalto108.mscd` carrega o k na linha de cabeçalho da
+  curva: `1  41  13.6300  18.0000  1.00000  0.00000`. O `18.0` é o theta, que
+  bate com `dthetamin=18` do `Cov0.txt`, e as linhas de dados começam em
+  `111.000`, que é o `dphimin=111` — a leitura dos campos está confirmada.
+
+Ou seja: cálculo a **975 eV** ajustado contra dado medido a **708 eV**.
+
+E a faixa 16–18 tem dono identificável: Ag 3d₅∕₂ (BE 368,3) com Al Kα dá k =
+17,13, no meio do intervalo. O `Cov0.txt` ainda traz `sn  Ag(111)-3d` como nome
+do sistema. O arquivo é sobra do experimento de Ag 3d, reaproveitado num
+experimento de Co 2p.
+
+**Correção aplicada:** `ps01` passou a `psAg111.txt` — a **mesma prata**, cobrindo
+k 5,00–17,75 com 256 pontos e `lnum=20`. Confirmado no log: `13.63 13.63`. A
+configuração antiga está em `Cov0.txt.k16-slab.bak`.
+
+Consequências:
+
+- **783 das 787 linhas de intensidade mudaram.** Os `factors` mexeram pouco
+  (0.6719 0.8649 → 0.6710 0.8642) porque são fatores de escala do ajuste, não
+  observável — **não use `factors` como teste de que a física mudou.**
+- `lnum` dobrou (10 → 20): laço paralelo +42%, preparo serial +18%, total +8 a
+  17%. Barato pelo que se ganha.
+- Com 13,63 no meio da tabela, o `i=0` do `phase.cpp:312` deixa de ser alcançado
+  — foi o que parou os travamentos.
+
+**Pendente, decisão de física:** o `ps02` é `psl9.txt`, arquivo genérico
+(`1  1 phase shift data`, `lnum=9`), enquanto existe `psCoHCP.txt` de cobalto na
+mesma árvore (`~/Ag_Co/theory/`), cobrindo 5,00–17,75. Não foi trocado.
+
 ## A regra do jogo
 
 **Toda versão tem de reproduzir as 787 linhas de intensidade byte a byte.**
 `./baseline/regressao.sh` verifica. Nenhuma otimização aqui troca precisão por
 velocidade — todas eliminam trabalho redundante ou trocam a estrutura de dados,
 mantendo a mesma aritmética na mesma ordem.
+
+**Atenção:** a referência do `regressao.sh` foi gerada em k = 16,00, antes da
+correção acima. Depois dela nada sai igual àquela referência — **a base tem de
+ser regerada** antes de o critério voltar a valer.
 
 Isso não é preciosismo: os laços a jusante percorrem `tevenpar` na ordem do
 índice (`mscdrunc.cpp:166,358,462,486`, `mscdrund.cpp:605`) e acumulam em ponto
@@ -325,79 +385,123 @@ comparação de floats que o código faz hoje. O hash não é aproximação.
 
 ## Escalabilidade — V0 contra V2
 
-`np` = 2, 4, 6, 8, 12, duas versões, duas repetições, **intercaladas dentro de
-cada `np`** para que deriva térmica atinja as duas igualmente e a razão entre
-elas se preserve. Tabela pelo **mínimo** das repetições (estimador padrão em
-benchmark: ruído só atrasa, nunca acelera). Dados brutos em `baseline/escala.csv`,
-figura em `baseline/escalabilidade.png` (`baseline/escala.py`).
+Campanha fria de 04/08/2026, 20:47 (`baseline/campanha.sh`, `REPS=2 PAUSA=45`,
+load 0,04 ao iniciar): `np` = 1, 2, 4, 6, 8, 12, duas versões, duas repetições,
+**intercaladas dentro de cada `np`** para que deriva térmica atinja as duas
+igualmente e a razão entre elas se preserve. Tabela pelo **mínimo** das
+repetições (estimador padrão em benchmark: ruído só atrasa, nunca acelera).
+Dados brutos em `baseline/escala.csv`, figura em `baseline/escalabilidade.png`
+(`baseline/escala.py`).
+
+**Estes números são da configuração corrigida** — `psAg111.txt`, k = 13,63 Å⁻¹,
+`lnum=20` (ver "O k errado"). **Não são comparáveis** com os de qualquer versão
+anterior deste arquivo, que foram medidos em k = 16,00 com `lnum=10`. O custo da
+correção, medido no V2: 116,06 → 135,65 s em `np=1`, 46,24 → 49,84 s em `np=4`.
 
 | `np` | V0 | V2 | ganho | speedup V0 | speedup V2 |
 |---:|---:|---:|---:|---:|---:|
-| 1 | 150,20 s | 130,96 s | 1,15× | 1,00× | 1,00× |
-| 2 | 87,20 s | 71,13 s | 1,23× | 1,72× | 1,84× |
-| 4 | **67,89 s** | 50,99 s | 1,33× | 2,21× | 2,57× |
-| 6 | 71,38 s | **48,82 s** | **1,46×** | 2,10× | **2,68×** |
-| 8 | 74,41 s | 50,82 s | 1,46× | 2,02× | 2,58× |
-| 12 | 81,50 s | 58,56 s | 1,39× | 1,84× | 2,24× |
+| 1 | 146,49 s | 135,65 s | 1,08× | 1,00× | 1,00× |
+| 2 | 87,53 s | 73,91 s | 1,18× | 1,67× | 1,84× |
+| 4 | **64,26 s** | **49,84 s** | 1,29× | **2,28×** | **2,72×** |
+| 6 | 70,97 s | 53,28 s | 1,33× | 2,06× | 2,55× |
+| 8 | 69,06 s | 51,89 s | 1,33× | 2,12× | 2,61× |
+| 12 | 69,70 s | 49,86 s | **1,40×** | 2,10× | 2,72× |
 
-O `np=1` foi medido isolado, depois do estudo (ver adiante); os demais vêm do
-estudo intercalado.
-
-**O speedup medido bate com o teto de Amdahl previsto.** Com o preparo serial de
-33,9 s em 70 s, o teto do V0 era 2,1× — e o melhor medido é **2,10×** em `np=6`.
-Com 13,1 s em 48,4 s, o teto do V2 subiu para 3,7×, e o medido chega a **2,68×**.
-A otimização serial não acelerou só o total: **levantou o teto de escalabilidade**.
-
-**`factors = 0.6719 0.8649` nas 20 rodadas**, nas duas versões e em todos os
+**`factors = 0.6710 0.8642` nas 24 rodadas**, nas duas versões e em todos os
 `np`. É a validação mais forte que temos: o resultado não depende nem da versão
 nem do número de ranks.
 
-Duas leituras:
+Três leituras:
 
-- **As duas versões pioram depois de 6 ranks.** A máquina tem 6 núcleos físicos
-  (12 threads); acima disso os ranks disputam e o tempo sobe. O mínimo do V0 fica
-  em `np=4`, o do V2 em `np=6`.
-- **O ganho do V2 cresce com o `np`**: 1,23× em `np=2` contra 1,46× em `np=6`.
-  Faz sentido e é o argumento central: quanto mais o laço paralelo encolhe, mais
-  o preparo serial domina — e é exatamente ele que o V2 cortou. **Otimizar o
-  serial é o que permite usar máquina grande.**
+- **O ótimo é `np=4`, não `np=6`.** O `np=4` ganha do `np=6` nos **quatro
+  pareamentos independentes** (V0 rep1 64,26 vs 76,77; V0 rep2 64,54 vs 70,97;
+  V2 rep1 49,84 vs 53,28; V2 rep2 51,83 vs 55,81), com margem de 7% a 16%. O
+  `np=12` empata com o `np=4` no mínimo (49,86 vs 49,84) mas com dispersão muito
+  pior no V0 — 15,7% entre repetições contra 0,4% do `np=4`. **Use `-np 4`.**
+- **O ganho do V2 cresce com o `np`**: 1,08× em `np=1` contra 1,40× em `np=12`.
+  É o argumento central: quanto mais o laço paralelo encolhe, mais o preparo
+  serial domina — e é exatamente ele que o V2 cortou. **Otimizar o serial é o que
+  permite usar máquina grande.**
+- **O gargalo mudou de lugar, e isto redireciona o próximo passo.** O preparo
+  serial do V2 é 15,5 s em 135,65 s de `np=1`, ou seja 11,4% ⇒ teto de Amdahl
+  **8,8×**. O medido é 2,72×. A diferença não está mais no serial: o laço
+  paralelo sozinho vai de ~120 s (`np=1`) para 35,6 s (`np=6`, cronometrado no
+  piloto), **3,4× com 6 ranks — 56% de eficiência**. Continuar cortando serial
+  rende pouco agora; o alvo passou a ser por que o laço perde 44%.
+  *(Derivado de um `np=6` instrumentado mais o total de `np=1`, não de uma
+  medição dedicada por `np`. Confirmar antes de agir.)*
 
-### Limitação destes números
+### Qualidade destes números
 
-**A segunda repetição está contaminada por deriva térmica** e foi descartada pelo
-mínimo: V0 em `np=6` deu 71,38 s na primeira e 107,50 s na segunda; V0 em `np=12`,
-81,50 s e 119,05 s. São 50% de inflação após ~40 min de carga contínua, não os 3%
-de ruído medidos em repouso. Na prática **a curva repousa em uma medição por
-ponto**. Para publicar, refazer com pausa de resfriamento entre rodadas.
+A dispersão entre repetições **cresce com o `np`**, o que faz sentido com 12
+threads sobre 6 núcleos físicos:
 
-### O falso alarme do `np=1` — e a lição de método
+| `np` | 1 | 2 | 4 | 6 | 8 | 12 |
+|---|---:|---:|---:|---:|---:|---:|
+| V0 | 1,0% | 2,7% | 0,4% | 8,2% | 8,8% | 15,7% |
+| V2 | 0,4% | 1,8% | 4,0% | 4,7% | 7,0% | 1,6% |
 
-Durante o estudo, uma rodada de `np=1` do V0 passou **897 s sem terminar**, e eu
-concluí que o `np=1` estava quebrado neste tamanho de cluster. **Estava errado.**
-Medido depois, isolado:
+Até `np=4` a reprodutibilidade é de fração de por cento — o `V0 np=1` deu 147,93
+e 146,49 s. Compare com a campanha suja anterior, onde o mesmo ponto ia de 71,4
+para 107,5 s: **o resfriamento inicial e as pausas de 45 s resolveram a deriva.**
+Nos pontos de `np` alto a dispersão é real e a curva ali deve ser lida com essa
+margem, não como valor exato.
 
-| | `np=1` | `factors` |
-|---|---:|---|
-| V0 | 150,20 s | 0.6719 0.8649 |
-| V2 | 130,96 s | 0.6719 0.8649 |
+### O `np=1` que não terminava — era bug, não contenção
 
-Ambos completam, com as mesmas 3154 linhas de saída e o resultado correto. Os
-897 s foram quase certamente **contenção de CPU** com outro processo usando a
-máquina: 897/150 = 6,0×, exatamente o que se espera de um processo único
-disputando 6 núcleos com outros 6 processos.
+Uma rodada de `np=1` do V0 passou **897 s sem terminar**, e este arquivo dizia
+que era **contenção de CPU** (897/150 = 6,0×, "exatamente o que se espera de um
+processo disputando 6 núcleos"). **Esse diagnóstico estava errado**, e a razão
+por que sobreviveu é que a aritmética fechava bonito.
 
-Dois erros de método que geraram isso, ambos fáceis de repetir:
+Em 04/08/2026 o travamento reapareceu, com a máquina **verificadamente vazia**
+(`load 1.00` = só o processo, 5,6 GB livres, `VmSwap: 0`, `read_bytes: 832`).
+Ficou 52 min em `R` a 100% de CPU sem escrever uma linha. Diagnóstico real, com
+o `rip` colhido por `gdb -p` e conferido no *disassembly*: laço infinito em
+**`phase.cpp:320`**, `while (xc-xb>90.0) xc-=180.0f`.
 
-1. **Tomar buffer de saída por progresso.** O `stdout` redirecionado para arquivo
-   é bufferizado em bloco: o arquivo fica muito atrás do que o programa já fez.
-   As "24 linhas paradas em 0,00%" eram o buffer, não o programa.
-2. **Concluir de uma única observação, sem controlar o ambiente.** A medição não
-   foi feita com a máquina quieta, e a explicação mais simples (alguém mais
-   usando a CPU) não foi verificada antes de eu partir para hipóteses sobre o
-   código.
+A cadeia, com a parte provada separada da inferida:
+
+1. **Provado.** `phase.cpp:164` zera as 256×61 posições de `phasea`, então valor
+   *de dentro* do array é da tabela (graus, ±180) ou zero — com ambos limitados o
+   laço termina em ≤2 iterações, **sempre**. Logo o índice tinha de estar fora, e
+   só existe um candidato: `(i-1)*61+j+1` com `i=0`, que dá −60..−51.
+2. **Provado.** `phase.cpp:312-313` permite `i=0`: o guarda `if (i<0) i=0` é
+   código morto, porque `i` nunca sai negativo daquele `for`. A intenção era
+   `if (i<1) i=1`.
+3. **Provado.** `rip = makephase+0x110`, um laço de 5 instruções
+   (`subss`/`movaps`/`subss`/`comiss 90.0`/`ja`) — é a linha 320 compilada.
+   Base PIE confere: `0x5ac4142fd5d0 − 0x2a5d0 = 0x5ac4142d3000`.
+4. **Provado.** Com `xb` grande negativo, `xc` decrementa 180 por iteração até a
+   precisão do `float` saturar (~3e9, onde `xc-180 == xc`) e **nunca termina**.
+5. **Inferido.** `phasea` é `float*`; `phasea[-60]` cai ~240 bytes antes do bloco
+   do `malloc`. Página nova do kernel vem zerada (caso comum ⇒ roda normal, e daí
+   `factors` sair sempre igual); reuso de chunk sujo ⇒ valor grande ⇒ trava. A
+   variação vem do Open MPI, que aloca em 3 threads com tempo indeterminado. Não
+   foi possível ler a memória do processo travado sem root.
+
+O gatilho era de configuração e está corrigido — ver "O k errado". Com
+`psAg111.txt` o `i=0` deixa de ser alcançado no caso normal (13,63 fica com 8,6
+Å⁻¹ de margem abaixo do início da tabela, em vez de zero), e o `np=1` rodou três
+vezes na campanha fria sem repetir. **Mas o bug continua no código**: a correção
+mínima é `if (i<1) i=1` na linha 313, e os quatro `while` de 320-325 seguem sem
+limite de iteração.
+
+Três erros de método que geraram isso, todos fáceis de repetir:
+
+1. **Aceitar a explicação cuja aritmética fecha.** 897/150 = 6,0× com 6 núcleos é
+   coincidência convincente, e foi ela que fechou a investigação cedo. Número
+   redondo não é evidência causal.
+2. **Não amostrar a pilha do processo vivo.** Custa 5 s (`gdb -p PID -batch -ex
+   "bt 25"`), decide a questão, e a evidência morre com o processo. Precisa de
+   `sudo` neste sistema: `ptrace_scope=1` só permite rastrear descendente.
+3. **Tomar buffer de saída por progresso.** O `stdout` redirecionado é
+   bufferizado em bloco, então o arquivo fica atrás do programa. Aqui isso
+   *escondeu* o travamento de verdade: as "24 linhas paradas em 0,00%" foram
+   descartadas como artefato de buffer quando eram sintoma real.
 
 Vale para o `precutable` e para qualquer medição futura: **medir com a máquina
-quieta, e reproduzir antes de concluir.**
+quieta, reproduzir antes de concluir, e amostrar a pilha antes de matar.**
 
 ## Perfil do `precutable` — o próximo alvo
 

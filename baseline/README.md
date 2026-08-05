@@ -9,6 +9,15 @@ Referência congelada em 04/08/2026 para validar qualquer otimização do
 
 ## O critério
 
+> **OBSOLETO desde 04/08/2026 20:00 — a base tem de ser regerada antes de o
+> critério voltar a valer.** A referência guardada aqui foi calculada em
+> k = 16,00 Å⁻¹, com o `ps01 = psAg111-slab.txt`. Descobriu-se que aquela tabela
+> de phase shift não cobria o k do experimento (Co 2p, 13,63 Å⁻¹) e que o
+> `kconfine` levantava o k em silêncio; o `Cov0.txt` agora usa `psAg111.txt` e
+> **783 das 787 linhas mudaram**. Nada sai igual ao que está aqui. Ver "O k
+> errado" no `../OTIMIZACAO.md`. Os arquivos deste diretório ficam preservados
+> como registro da configuração antiga — `Cov0.txt` daqui é a config de k = 16.
+
 **As 787 linhas de intensidade de `saida1Co-alterado-alexandre.txt` têm de sair
 idênticas byte a byte.** Qualquer modificação que mude uma casa decimal mudou o
 resultado físico e está errada até prova em contrário.
@@ -50,16 +59,27 @@ com uma rodada só.
 
 Três erros cometidos nesta campanha, todos com custo real de tempo:
 
-1. **Máquina ocupada.** Uma rodada de `np=1` levou 897 s em vez de 150 s porque
-   outro processo usava a CPU — 6,0×, exatamente a razão esperada. Confira com
+1. **Máquina ocupada.** Confira com
    `ps -eo args | grep -cE "^mpirun|^randmscd"` **antes** de medir; tem de dar 0.
    E não dispare dois trabalhos de medição sobrepostos (eu disparei).
+   *(Este item dizia que a rodada de `np=1` de 897 s foi contenção de CPU — 6,0×,
+   "exatamente a razão esperada". **Estava errado**: era o laço infinito do
+   `phase.cpp:320`. A coincidência aritmética é que deu credibilidade à
+   explicação errada e fechou a investigação cedo.)*
 2. **Deriva sob carga contínua.** Depois de ~1,5 h medindo, a mesma versão sem
    mudança de código passou de 48,4 s para 56,5 s (~15%). **Só compare medições
    feitas na mesma janela**, ou deixe a máquina descansar antes de uma campanha.
-3. **Buffer de saída não é progresso.** `stdout` redirecionado para arquivo é
-   bufferizado em bloco; o arquivo fica muito atrás do programa. Não conclua
-   "travou" olhando o arquivo parar de crescer.
+   Resolvido na prática: a campanha fria de 04/08/2026 começou com `load 0.04` e
+   deu 0,4% de dispersão entre repetições em `np` baixo.
+3. **Buffer de saída não é progresso — mas parada prolongada é sintoma.** `stdout`
+   redirecionado é bufferizado em bloco, então o arquivo fica atrás do programa.
+   Só que **esta regra, aplicada cega, esconde travamento de verdade**: em
+   04/08/2026 as "24 linhas paradas em 0,00%" foram descartadas como buffer e eram
+   sintoma real de um laço infinito. O que decide não é o arquivo, é o processo:
+   `awk '{print $14}' /proc/PID/stat` subindo com o arquivo parado por dezenas de
+   minutos = girando em laço. Aí **amostre a pilha antes de matar**, que a
+   evidência morre com o processo:
+   `sudo gdb -p PID -batch -ex "bt 25" -ex "info registers rip"`.
 
 ## Onde vão os 70 s
 

@@ -8,8 +8,11 @@
 # Duracao aproximada: ~27 min por repeticao.
 #
 # POR QUE AS PRECAUCOES (todas custaram tempo real nesta campanha):
-#  - maquina ocupada: uma rodada de np=1 levou 897 s em vez de 150 s por
-#    disputa de CPU. O script ABORTA se achar outro mpirun/randmscd rodando.
+#  - maquina ocupada contamina a medicao: o script ABORTA se achar outro
+#    mpirun/randmscd rodando. (A rodada de 897 s que motivou esta checagem NAO
+#    era contencao -- era o bug de laco infinito do phase.cpp:320, ver
+#    OTIMIZACAO.md. A checagem continua valendo; o motivo registrado estava
+#    errado. Se um np travar de novo, amostre a pilha antes de matar.)
 #  - deriva sob carga continua: depois de ~1,5 h medindo, a mesma versao sem
 #    mudanca de codigo passou de 48,4 s para 56,5 s. Dai a pausa entre rodadas.
 #  - primeira rodada fria: a primeira execucao apos o boot/build custa ~40% a
@@ -40,7 +43,11 @@ fi
 roda() { # $1=binario $2=np  -> imprime "wall factors"
   /usr/bin/time -f "%e" -o "$TMP.t" \
     mpirun --use-hwthread-cpus -np "$2" "$1" Cov0.txt > "$TMP.out" 2> "$TMP.err"
-  echo "$(cat "$TMP.t") $(grep -h 'factors =' "$TMP.out" | tail -1 |
+  # tail -1 e nao cat: quando o comando sai com status nao-zero, o GNU time
+  # escreve "Command exited with non-zero status N" ANTES do %e. Com cat, o
+  # campo wall virava a palavra "Command" e o float() do escala.py quebrava,
+  # corrompendo o CSV inteiro da campanha.
+  echo "$(tail -1 "$TMP.t") $(grep -h 'factors =' "$TMP.out" | tail -1 |
     sed 's/.*factors = *//; s/  */ /g')"
 }
 
