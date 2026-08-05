@@ -6,26 +6,34 @@ profundidade 20, 247 átomos.
 
 ---
 
-## COMO CONTINUAR (estado em 04/08/2026, fim da sessão)
+## COMO CONTINUAR (estado em 05/08/2026, fim da sessão)
 
 ### Onde o código está
 
-- **V1 e V2 aplicados e validados** (`mscdrunb_not_reanalize.cpp`). **V3 foi
-  tentado e revertido** — ver a seção V3; ficou um comentário no código avisando.
-- O binário `randmscd_parallel` está compilado **com `-DMSCDTIMER`**, então
-  imprime cronômetros de fase em stderr. Para reconstruir:
+- **V1, V2 e V4 aplicados e validados.** V1/V2 em
+  `mscdrunb_not_reanalize.cpp` (`symtrivert`), **V4 em `mscdrund.cpp:128`**
+  (o corte do `tevencut` antes de encher o `csum`). **V3 foi tentado e
+  revertido** — ver a seção V3; ficou um comentário no código avisando.
+  **O nome V3 está queimado**: a próxima otimização é V5.
+- O binário de trabalho está em **build de produção, sem `-DMSCDTIMER`**. Para
+  reconstruir com cronômetros de fase e os acumuladores do laço:
   ```bash
-  make randmscd_parallel CPPFLAGS="-O3 -std=c++98 -w -fpermissive -DMSCDTIMER"
+  rm -f *.o && make randmscd_parallel \
+    CPPFLAGS="-O3 -std=c++98 -w -fpermissive -DMSCDTIMER"
   ```
-  Sem a macro o binário fica idêntico ao de produção (a instrumentação some).
-- **`baseline/randmscd_parallel.baseline` é o binário V0 original preservado.**
-  Não recompile por cima; é a referência de comparação.
+  Sem a macro não sobra instrução nenhuma. **Com** a macro, o `summation` faz um
+  passe extra de histograma na primeira chamada (~1 s) — não use build
+  instrumentado para medir tempo total.
+- **Binários preservados**, não recompile por cima:
+  `baseline/randmscd_parallel.baseline` (V0 original),
+  `baseline/randmscd_parallel.v2` e `.v4` (produção, campanha de 05/08).
 - Validação de qualquer mudança: `./baseline/regressao.sh [np]` — as 787 linhas
-  de intensidade têm de sair idênticas byte a byte. **A referência atual está
-  obsoleta** (foi gerada em k = 16,00): ver "O k errado".
-- **A configuração mudou**: `ps01` agora é `psAg111.txt` (k 13,63, `lnum=20`). A
-  anterior está em `Cov0.txt.k16-slab.bak`. **Nenhum número medido antes de
-  04/08/2026 20:47 é comparável com os de depois.**
+  de intensidade têm de sair idênticas byte a byte. **A base foi regerada em
+  05/08/2026** na configuração de k = 13,63 e está válida. A antiga (k = 16) foi
+  preservada em `baseline/k16-slab/`.
+- **A configuração de física**: `ps01` = `psAg111.txt` (k 13,63, `lnum=20`),
+  `ps02` = `psl9.txt`. A anterior está em `Cov0.txt.k16-slab.bak`. **Nenhum
+  número medido antes de 04/08/2026 20:47 é comparável com os de depois.**
 
 ### Feito: campanha de medição a frio
 
@@ -45,26 +53,30 @@ começou com `load 0.04`, e é a isso que se deve a dispersão de 0,4%.
 
 ### Próximas ações, nesta ordem
 
-1. **Regerar a base de regressão.** Sem isso o `regressao.sh` acusa diferença em
-   toda mudança, porque a referência é de k = 16,00. É o primeiro passo, antes de
-   mexer em qualquer código.
-2. **Fechar o bug do `phase.cpp`.** `if (i<1) i=1` na linha 313 (o guarda atual é
+Reordenadas em 05/08/2026 pelo perfil do laço — ver "Perfil do laço paralelo".
+Os itens 1 e 2 da lista anterior (regerar a base; instrumentar o laço) **estão
+feitos**.
+
+1. **`alldblevent` / `evenelem` — 49,6% do laço, o maior item de longe.**
+   `mscdrunc.cpp:753` varre os 40 562 pares distintos chamando `evenelem`
+   (`mscdrunc.cpp:22`) até 15 vezes cada; `evenelem` é a soma sobre `l`, e o
+   `lnum` dobrou (10 → 20) com a correção do k. **Nada foi tentado aqui ainda** —
+   é território virgem e é onde está o tempo.
+2. **A cópia `bsum ← asum`** (`mscdrund.cpp:109-117`): os ~199 GB de tráfego que
+   o V4 não pegou. Mesmo raciocínio do V4, mas a semântica exige cuidado (as
+   entradas não reescritas têm de manter o valor da passada anterior).
+3. **Fechar o bug do `phase.cpp`.** `if (i<1) i=1` na linha 313 (o guarda atual é
    código morto) e um limite de iteração nos quatro `while` de 320-325. Hoje o bug
    está sem gatilho, não corrigido — ver "O `np=1` que não terminava".
-3. **Descobrir por que o laço paralelo perde 44%.** Mudou de prioridade: com o
-   serial em 11,4% o teto de Amdahl é 8,8×, mas o medido é 2,72×, porque o laço
-   escala 3,4× em 6 ranks. **Continuar cortando serial rende pouco agora.**
-   Instrumentar o laço por `np` antes de propor qualquer coisa.
-4. **`precutable` com profiling de verdade.** Segue sendo o maior item serial
-   (9,7 s de 13,1 s na config antiga; 13,2 s de 15,5 s na nova), 82% num laço só.
-   **Não otimizar por leitura**: dois palpites já foram derrubados pela medição (a
-   fase C, que eu estimei igual à A e era o dobro; e o V3, que eu previ mais
-   rápido e ficou 13% mais lento). Usar `perf stat -e
-   cache-misses,LLC-load-misses` antes de propor transformação. *(`perf` não está
+4. **`pathcut` dentro do `precutable`** — 7,9 s dos ~11 s de preparo serial com a
+   máquina leve. Continua sendo o maior item **serial**, mas o serial inteiro é
+   ~8% do total agora. **Não otimizar por leitura**: dois palpites já foram
+   derrubados pela medição (a fase C, que eu estimei igual à A e era o dobro; e o
+   V3, que eu previ mais rápido e ficou 13% mais lento). *(`perf` não está
    instalado nesta máquina — verificado em 04/08/2026.)*
-5. **`sendjobs` sem `MPI_Bcast`** (`mscdrun.cpp:502`): envia ~190 MB num laço
-   ponto a ponto, custo ∝ número de ranks. 0,97 s com 6, ~10 s com 64. É o
-   defeito que mais atrapalha em máquina grande.
+5. **`sendjobs` sem `MPI_Bcast`** (`mscdrun.cpp:502`): envia centenas de MB num
+   laço ponto a ponto, custo ∝ número de ranks. 0,97 s com 6, ~10 s projetados
+   com 64. É o defeito que mais atrapalha em máquina grande.
 
 ### Regras de medição (custaram tempo real para aprender)
 
@@ -145,7 +157,7 @@ correção acima. Depois dela nada sai igual àquela referência — **a base te
 ser regerada** antes de o critério voltar a valer.
 
 Isso não é preciosismo: os laços a jusante percorrem `tevenpar` na ordem do
-índice (`mscdrunc.cpp:166,358,462,486`, `mscdrund.cpp:605`) e acumulam em ponto
+índice (`mscdrunc.cpp:167,358,462,486`, `mscdrund.cpp:605`) e acumulam em ponto
 flutuante. **Reordenar `tevenpar` muda o resultado na última casa.** Por isso
 toda versão preserva a ordem exata do original, mesmo quando a ordem em si é
 arbitrária.
@@ -175,6 +187,13 @@ interfaces complicadas explodem.
 
 ## Medições
 
+> ⚠ **Esta tabela é da configuração antiga** (`psAg111-slab.txt`, k = 16,00,
+> `lnum=10`). Ela continua valendo para o que foi feita — comparar V0/V1/V2 entre
+> si, na mesma configuração — mas **os valores absolutos não são os de hoje**.
+> Na configuração corrigida (k = 13,63, `lnum=20`) o mesmo preparo serial do V2
+> custa ~15,5 s em vez de 13,1 s, com `symtrivert` em 2,50 s e `precutable` em
+> 15,64 s. Números atuais na seção "Escalabilidade".
+
 `-np 6`, build com `-DMSCDTIMER`. Tempo em regime, descartando a primeira rodada
 (fria). Dispersão entre rodadas: 3% — **ganho abaixo de ~5% é ruído**.
 
@@ -196,6 +215,13 @@ Rodadas: V1 = 55,76 / 54,28 / 56,67 s. V2 = 50,38 / 47,22 / 47,46 s.
 
 **`symtrivert` 20,87 → 1,59 s (13×). Total 70 → 48,4 s (−31%).** Em todas as
 versões: curva idêntica byte a byte, `nsymm=1525` e `ntrieven=823318` idênticos.
+
+*(O `ntrieven=823318` também é da configuração antiga. Na atual são **795 605** —
+`mscdrunb_not_reanalize.cpp:411` faz `vlenc = kmin/100.0f`, então o `kmin` entra
+na largura do bin de deduplicação e a contagem de trios distintos **não é
+puramente geométrica**. O `nsymm=1525` não mudou porque não depende do k:
+começa em `natoms*natoms/20` = 247²/20 = 3050 e é dividido por 2 no único
+Reanalyzing — que é o que o log quer dizer com `Analyzed symmetries for 2 times`.)*
 
 O preparo serial caiu de 48% para 27% do tempo total. O teto de Amdahl subiu de
 2,1× para 3,7×.
@@ -598,7 +624,179 @@ stall (`perf stat -e cache-misses,LLC-load-misses`) — para dizer onde o tempo 
 antes de qualquer nova transformação. Foi o segundo palpite meu que a medição
 derrubou (o primeiro foi ter estimado a fase C igual à A, quando era o dobro).
 
+## Perfil do laço paralelo — 05/08/2026
+
+Até aqui todo o esforço foi no preparo serial, e o laço dos 779 pontos era uma
+caixa preta de ~120 s. Instrumentado por dentro (`mscdtimer.h` ganhou
+acumuladores; um `fprintf` por chamada custaria mais que a região medida, porque
+`summation` roda 3895 vezes).
+
+`-np 1`, build com `-DMSCDTIMER`. Os acumuladores somam 148,26 s contra os
+148,76 s do cronômetro do laço: **99,7% do tempo explicado**.
+
+| bloco | tempo | % do laço | chamadas reais |
+|---|---:|---:|---:|
+| **`alldblevent`** (`mscdrunc.cpp:753`) | **73,58 s** | **49,6%** | 779 |
+| `summation` — laço de `m` | 48,10 s | 32,4% | 3895 |
+| `summation` — bloco final (`onevenemit`) | 12,25 s | 8,3% | 3895 |
+| `allevendetec` | 10,07 s | 6,8% | 3895 |
+| `summation` — init do `asum` | 4,26 s | 2,9% | 3895 |
+| `thetainside` | 0,003 s | 0,0% | 3895 |
+
+*(Rodada com a máquina carregada — 171,4 s de wall contra 135,65 s da campanha
+fria. Os absolutos estão inflados; as proporções valem. Na mesma rodada o
+`symtrivert` deu 2,72 s e o `pathcut` 16,34 s, contra 1,37 s e 7,88 s medidos
+depois com a máquina leve: **a carga quase dobra as fases seriais**.)*
+
+### O laço de `m` quase não calcula física
+
+Histograma do `evedim`, medido uma vez (as máscaras do `pathcut` não mudam entre
+direções porque `kmin==kmax`, então a energia é constante na corrida inteira):
+
+```
+visitas potenciais (m,ia,ib,ic)     90 231 570
+  podados por tevencut (par ia,ib)  90 110 787   99,87%
+  podados por evedim<1 ou ic==ib       119 328    0,13%
+  evedim= 1    762 trios        762 MACs
+  evedim= 3    625 trios      5 625 MACs
+  evedim= 6     17 trios        612 MACs
+  evedim=10     30 trios      3 000 MACs
+  evedim=15     21 trios      4 725 MACs
+```
+
+**Sobrevivem 1 455 trios, com 14 724 MACs no total.** Isso é trabalho de
+microssegundos. Os 48 s do laço de `m` são portanto **tráfego de memória, não
+conta** — duas cópias grandes por chamada:
+
+- `bsum ← asum` (`mscdrund.cpp:109-117`): 7 passadas × 247 × 246 × 15 complexos
+  = 51 MB por chamada de `summation`
+- o preenchimento do `csum` a partir de `devendetec`: outros 51 MB por chamada
+
+× 3895 chamadas ≈ **400 GB de tráfego para produzir 14 724 multiplicações**. A
+8,3 GB/s isso dá exatamente os 48 s medidos.
+
+### Consequências
+
+1. **A prioridade mudou de novo.** O alvo é o `alldblevent`, 49,6% sozinho — não
+   o laço de `m`, que eu tinha suposto ser o núcleo.
+2. **Para GPU, o alvo natural é o `evenelem`** (`mscdrunc.cpp:22`), a soma sobre
+   `l` que o `alldblevent` chama até 15 vezes para cada um dos 40 562 pares
+   distintos: tarefas independentes, aritmética densa, escrita coalescida, e as
+   tabelas consultadas (deslocamento de fase, Hankel, harmônicos) são pequenas.
+   A hipótese anterior — de que a divergência de `evedim` seria o problema na
+   GPU — **está errada**: com 1 455 trios não há trabalho para divergir.
+3. **Explica o custo da correção do k.** `alnum` vem do `lnum`, que subiu de 10
+   para 20 com o `psAg111.txt`; o laço de `l` do `evenelem` dobrou. É a mecânica
+   por trás dos 116,06 → 135,65 s que estavam registrados sem explicação.
+4. **`makephase` não é problema**, ao contrário do que a estrutura sugere:
+   `getalnum` → `makephase` é chamado por `evenelem`, mas `phase.cpp:310` tem
+   cache (`if (xa>1.0e-3)`) e com `akin` constante o cache sempre acerta.
+
+Medido também: **`MAXRSS` = 313 MB** por rank (`/usr/bin/time -f %M`, `np=1`).
+O valor de 582 MB da tabela de medições acima é da configuração antiga.
+
+## V4 — o corte do `tevencut` antes de encher o `csum`
+
+Consequência direta do perfil. Em `mscdrund.cpp` a ordem era:
+
+```cpp
+for (j=0;j<radim;++j)                 // 15 leituras de devendetec
+{ id=ia*natoms*radim+ib*radim+j;
+  csum[j]=devendetec[id];
+}
+if (tevencut[(m-1)*natoms*natoms+ia*natoms+ib]==0) continue;   // 99,87% saem aqui
+```
+
+O `csum` era preenchido **antes** do teste e só é usado depois dele — dentro do
+laço de `ic` e na escrita de volta, ambos pulados pelo `continue`. Trocar a ordem
+é exatamente equivalente e elimina ~199 GB dos ~400 GB de tráfego.
+
+**Não é o V3.** O V3 é a inversão dos laços do `pathcut`, que piorou 13% e foi
+revertida (seção acima). O nome está ocupado; esta é a V4.
+
+### Medição, com controle interno
+
+Duas rodadas `-np 1` instrumentadas. O `alldblevent` **não foi tocado**, então
+serve de controle para a diferença de carga entre as duas:
+
+| bloco | V2 | V4 | |
+|---|---:|---:|---|
+| `alldblevent` (**controle**) | 73,58 s | 71,14 s | −3,3% |
+| **laço de `m`** | 48,10 s | **27,60 s** | **−42,6%** |
+| bloco final | 12,25 s | 11,22 s | −8,4% |
+| `allevendetec` | 10,07 s | 10,95 s | +8,7% |
+| init do `asum` | 4,26 s | 3,89 s | −8,7% |
+| **soma do laço** | **148,26 s** | **124,80 s** | **−15,8%** |
+
+A máquina variou 3,3% (medido no código intocado) enquanto o laço de `m` caiu
+43%: **o ganho é real, ~20,5 s de um laço de 148 s.**
+
+**Validação:** `./baseline/regressao.sh 1` → `IDENTICA byte a byte OK`, com
+`factors = 0.6710 0.8642`. Era o esperado: a mudança é de ordem de execução, não
+de aritmética.
+
+### Campanha V2 × V4 — 05/08/2026
+
+`baseline/campanha-v4.sh`, 2 repetições, pausa de 45 s, load 1,06 ao iniciar.
+**Os dois binários saem da mesma build de produção, sem `-DMSCDTIMER`**
+(`baseline/randmscd_parallel.v2` e `.v4`) — o V2 foi remedido de propósito, porque
+os pontos de 04/08 vieram de binário com cronômetros e de outra janela térmica.
+`factors = 0.6710 0.8642` nas 24 rodadas.
+
+| `np` | V0 (04/08) | V2 (05/08) | V4 (05/08) | V4 sobre V2 | V4 sobre V0 |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 146,49 s | 144,52 s | 132,45 s | 1,09× | 1,11× |
+| 2 | 87,53 s | 77,49 s | 71,45 s | 1,09× | 1,23× |
+| 4 | 64,26 s | 51,07 s | 45,93 s | 1,11× | 1,40× |
+| 6 | 70,97 s | 53,29 s | 46,08 s | **1,16×** | 1,54× |
+| 8 | 69,06 s | 49,30 s | 44,67 s | 1,10× | 1,55× |
+| 12 | 69,70 s | 47,92 s | **44,05 s** | 1,09× | **1,58×** |
+
+**Deriva do V2 entre as duas janelas: +0,8% em média, +6,5% no pior `np`.** É
+pequena, então comparar o V4 de hoje com o V0 de ontem é defensável — mas a
+coluna "V4 sobre V0" carrega essa margem, e a de `np=1` é a mais suspeita
+(+6,5%).
+
+### O `np` ótimo mudou de lugar — e a conclusão anterior era forte demais
+
+Nesta janela, para **as duas versões e as duas repetições**, a ordem é
+`np=12 < np=8 < np=4 < np=6`. O `np=12` ganha do `np=4` nos quatro pareamentos
+independentes — que é **exatamente o argumento que foi usado em 04/08 para
+concluir o contrário**, quando o `np=4` ganhava nos quatro.
+
+O que sobrevive às duas janelas:
+
+- **`np=1` e `np=2` são claramente piores.** Robusto.
+- **`np=6` é consistentemente o pior de {4, 6, 8, 12}** — V2 deu 53,28 s em
+  04/08 e 53,29 s em 05/08. Robusto, e curioso: é justamente o número de núcleos
+  físicos.
+- **Entre `np=4`, `8` e `12` a ordem inverte entre janelas**, e a diferença
+  (~6%) é do mesmo tamanho da deriva medida. **Não é uma propriedade estável da
+  máquina.**
+
+Conclusão honesta: **use `np ≥ 4` e evite `np=6`**. A recomendação anterior de
+"use `-np 4`, ganha nos quatro pareamentos, então não é ruído" estava
+**correta dentro daquela janela e errada como regra geral** — o teste de
+pareamento detecta ordenação dentro de uma janela, não a estabilidade dela entre
+janelas. Para afirmar um ótimo seria preciso repetir a campanha em dias
+diferentes, o que não foi feito.
+
+![escalabilidade](baseline/escalabilidade.png)
+
+### A outra metade
+
+A cópia `bsum ← asum` é os outros ~199 GB. Pelo mesmo raciocínio ela é quase toda
+desnecessária — só as entradas `(ib,ic)` efetivamente lidas importam, e são
+poucas. Mas a semântica exige cuidado (as entradas não reescritas têm de manter o
+valor da passada anterior), então não é troca de uma linha. **Não tentado ainda.**
+
 ## Depois do V2
+
+> **Parcialmente obsoleta desde 05/08/2026.** A ordem abaixo foi escrita quando
+> se supunha que o preparo serial era o gargalo. O perfil do laço mostrou que o
+> `alldblevent` sozinho é 49,6% do laço, e o V4 já colheu o item mais barato.
+> Os itens 2 e 3 continuam válidos como descrição do que é paralelizável; a
+> **prioridade**, não.
 
 Nesta ordem, pelo que as medições mostram:
 

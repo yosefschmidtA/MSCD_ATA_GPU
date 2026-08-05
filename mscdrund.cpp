@@ -16,6 +16,7 @@
 #include "jobtime.h"
 #include "userutil.h"
 #include "mscdrun.h"
+#include "mscdtimer.h"
 
 int Mscdrun::summation(float akin,float *xdetec,float *polaron,
   float *suminten,float *bakinten,Fcomplex *asum,Fcomplex *bsum,
@@ -26,6 +27,52 @@ int Mscdrun::summation(float akin,float *xdetec,float *polaron,
   Fcomplex cxa,cxb,cxc,dsum,esum;
   int lamda[64];
   Fcomplex algam[256];
+  MSCDT_ADECL;
+
+#ifdef MSCDTIMER
+  /* Histograma de evedim: mede a divergencia que um kernel de GPU enfrentaria.
+     Roda uma vez so' -- as mascaras do pathcut nao mudam entre direcoes porque
+     kmin==kmax, entao a energia e' constante na corrida inteira. */
+  { static int mscdt_hist_feito=0;
+    if (!mscdt_hist_feito)
+    { double hist[16]; double cortados=0.0, parpulado=0.0, total=0.0;
+      int hm,hia,hib,hic,hd,hid;
+      mscdt_hist_feito=1;
+      for (hd=0;hd<16;++hd) hist[hd]=0.0;
+      for (hm=msorder;hm>=2;--hm)
+      { for (hia=0;hia<natoms;++hia)
+        { if ((hm==2)&&(patom[hia*12+7]==0)) continue;
+          for (hib=0;hib<natoms;++hib)
+          { if (hib==hia) continue;
+            total+=natoms;
+            if (tevencut[(hm-1)*natoms*natoms+hia*natoms+hib]==0)
+            { parpulado+=natoms; continue; }
+            for (hic=0;hic<natoms;++hic)
+            { hid=hia*natoms*natoms+hib*natoms+hic;
+              hd=tevendim[hid];
+              if ((sizeint<4)&&(hm>5)) hd>>=12;
+              else if (hm>8) hd>>=24;
+              else hd>>=(hm-2)*4;
+              hd&=15;
+              if ((hic==hib)||(hd<1)) { cortados+=1.0; continue; }
+              hist[hd]+=1.0;
+            }
+          }
+        }
+      }
+      fprintf(stderr,"[hist] visitas potenciais (m,ia,ib,ic) %.0f\n",total);
+      fprintf(stderr,"[hist]   podados por tevencut (par ia,ib) %.0f  %5.2f%%\n",
+        parpulado,total>0?100.0*parpulado/total:0.0);
+      fprintf(stderr,"[hist]   podados por evedim<1 ou ic==ib   %.0f  %5.2f%%\n",
+        cortados,total>0?100.0*cortados/total:0.0);
+      for (hd=1;hd<16;++hd) if (hist[hd]>0.0)
+        fprintf(stderr,"[hist]   evedim=%2d  %12.0f trios  %5.2f%% das visitas"
+          "  %12.0f MACs\n",hd,hist[hd],total>0?100.0*hist[hd]/total:0.0,
+          hist[hd]*hd*hd);
+      fflush(stderr);
+    }
+  }
+#endif
 
   for (j=0;(error==0)&&(j<32);++j)
   { if ((j==0)||(j==3)||(j==10)) k=0;
@@ -46,6 +93,7 @@ int Mscdrun::summation(float akin,float *xdetec,float *polaron,
 
 
   ali=linitial;
+  MSCDT_AMARK;
   for (ib=0;(error==0)&&(ib<natoms);++ib)
   { for (ic=0;ic<natoms;++ic)
     { for (j=0;j<radim;++j)
@@ -55,6 +103,7 @@ int Mscdrun::summation(float akin,float *xdetec,float *polaron,
       }
     }
   }
+  MSCDT_A(3,"summation: init asum");
 
   for (m=msorder;(error==0)&&(m>=2);--m)
   { for (ib=0;ib<natoms;++ib)
@@ -71,12 +120,17 @@ int Mscdrun::summation(float akin,float *xdetec,float *polaron,
       if ((m==2)&&(emiter==0)) continue;
       for (ib=0;ib<natoms;++ib)
       { if (ib==ia) continue;
+        /* V4: o corte vem ANTES de encher csum. 99,87% dos pares (ia,ib) saem
+           aqui, e o csum so' e' lido dentro do laco de ic e escrito de volta
+           no fim -- os dois pulados por este continue. Encher antes era ler
+           15 complexos de devendetec para jogar fora: ~199 GB de trafego na
+           corrida inteira. Medido em 05/08/2026, curva byte a byte identica. */
+        if (tevencut[(m-1)*natoms*natoms+ia*natoms+ib]==0) continue;
         for (j=0;j<radim;++j)
         { id=ia*natoms*radim+ib*radim+j;
           csum[j]=devendetec[id];
         }
 
-        if (tevencut[(m-1)*natoms*natoms+ia*natoms+ib]==0) continue;
         for (ic=0;ic<natoms;++ic)
         { id=ia*natoms*natoms+ib*natoms+ic;
           evedim=tevendim[id];
@@ -124,6 +178,7 @@ int Mscdrun::summation(float akin,float *xdetec,float *polaron,
       }
     }
   }
+  MSCDT_A(4,"summation: laco de m (serie)");
 
   for (ia=0;ia<natoms;++ia)
   { emiter=patom[ia*12+7];
@@ -149,6 +204,7 @@ int Mscdrun::summation(float akin,float *xdetec,float *polaron,
       *suminten+=emiter*norm(dsum+esum); *bakinten+=emiter*norm(esum);
     }
   }
+  MSCDT_A(5,"summation: bloco final (onevenemit)");
 
   return(error);
 } //end of Mscdrun::summation
@@ -160,6 +216,7 @@ int Mscdrun::intensity(int afitmath,float *afit,float *xdata,
     bakinten,netinten,altheta,alphi,bdtheta,bdphi,areliable,breliable;
   float xdetec[6],polaron[10];
   Fcomplex *asum,*bsum,*csum;
+  MSCDT_ADECL;
 
   asum=bsum=csum=NULL;
   if ((error==0)&&(mype==0)&&((!xdata)||(!ydata)||(!ymod))) error=901;
@@ -229,10 +286,14 @@ int Mscdrun::intensity(int afitmath,float *afit,float *xdata,
     }
     suminten=bakinten=0.0f;
     for (k=0;(error==0)&&(k<5);++k)
-    { thetainside(k,akin,akout,adtheta,adphi,altheta,alphi,xdetec,
+    { MSCDT_AMARK;
+      thetainside(k,akin,akout,adtheta,adphi,altheta,alphi,xdetec,
         polaron);
+      MSCDT_A(0,"thetainside");
       if (k==0) error=alldblevent(akin,xdetec);
+      MSCDT_A(1,"alldblevent");
       if (error==0) error=allevendetec(akin,xdetec);
+      MSCDT_A(2,"allevendetec");
       if (error==0) error=summation(akin,xdetec,polaron,
         &suminten,&bakinten,asum,bsum,csum);
       if ((k==0)&&(accepang>=1.0e-3))
@@ -253,6 +314,7 @@ int Mscdrun::intensity(int afitmath,float *afit,float *xdata,
     if ((error==0)&&(mype==0)) error=dispintensity(4,i,0,0.0f,0.0f,
       akout,adtheta,adphi,suminten);
   }
+  MSCDT_AREPORT("dentro do laco dos pontos",mype);
   if ((error==0)&&(numpe>1)&&(mype==0)) error=receivesup(2);
   else if ((error==0)&&(numpe>1)) error=sendsup(2);
 

@@ -1,22 +1,14 @@
 # Linha de base — Ag(111), raio 9 / profundidade 20
 
 > Campanha de otimização e resultados por versão: **`../OTIMIZACAO.md`**.
-> `v1/` e `v2/` guardam curva, log e fonte de cada versão (55,6 s e 48,4 s,
-> curvas idênticas). Figura: `antes-depois.png`, gerada por `figura.py`.
+> `v1/` e `v2/` guardam curva, log e fonte de cada versão. Figuras:
+> `antes-depois.png` (`figura.py`) e `escalabilidade.png` (`escala.py`).
 
-Referência congelada em 04/08/2026 para validar qualquer otimização do
-`symtrivert` ("Analyzing/Reanalyzing") e do resto do preparo serial.
+**Base regerada em 05/08/2026** na configuração corrigida de k = 13,63
+(`ps01 = psAg111.txt`, `lnum=20`). A base anterior, de k = 16,00, está
+preservada em **`k16-slab/`** — é registro histórico, não compare com ela.
 
 ## O critério
-
-> **OBSOLETO desde 04/08/2026 20:00 — a base tem de ser regerada antes de o
-> critério voltar a valer.** A referência guardada aqui foi calculada em
-> k = 16,00 Å⁻¹, com o `ps01 = psAg111-slab.txt`. Descobriu-se que aquela tabela
-> de phase shift não cobria o k do experimento (Co 2p, 13,63 Å⁻¹) e que o
-> `kconfine` levantava o k em silêncio; o `Cov0.txt` agora usa `psAg111.txt` e
-> **783 das 787 linhas mudaram**. Nada sai igual ao que está aqui. Ver "O k
-> errado" no `../OTIMIZACAO.md`. Os arquivos deste diretório ficam preservados
-> como registro da configuração antiga — `Cov0.txt` daqui é a config de k = 16.
 
 **As 787 linhas de intensidade de `saida1Co-alterado-alexandre.txt` têm de sair
 idênticas byte a byte.** Qualquer modificação que mude uma casa decimal mudou o
@@ -27,33 +19,61 @@ resultado físico e está errada até prova em contrário.
 ./baseline/regressao.sh 1      # np=1
 ```
 
-O script descarta só o rodapé (`This calculation took … starting on …`), que traz
-data e duração — é a única coisa que varia entre rodadas idênticas. Verificado
-em 5 rodadas.
+O script descarta as linhas de data e duração — o rodapé (`This calculation took
+… starting on …`) e o cabeçalho (`calculated by … on <data>`). São as únicas que
+variam entre rodadas idênticas. *(O cabeçalho entrou no filtro em 05/08/2026:
+sem ele a regressão acusa 1 linha de diferença sempre que a base e a rodada caem
+em dias diferentes.)*
 
-Os `factors = 0.6719 0.8649` do terminal **não** servem sozinhos como critério:
-saem com 4 casas (`mscdrund.cpp:470`), grosso demais para pegar deriva numérica.
-Servem de conferência rápida; quem manda é a curva.
+Os `factors` do terminal **não** servem sozinhos como critério: saem com 4 casas
+(`mscdrund.cpp:530`), grosso demais para pegar deriva numérica. Prova disso: a
+troca do `ps01` mudou **783 das 787 linhas** e os fatores se moveram só de
+0,6724 0,8642 para 0,6710 0,8642, porque são fatores de escala do ajuste.
+Servem de conferência rápida; **quem manda é a curva**.
+
+> **Isto vai quebrar no port de GPU.** A redução sobre `ic` soma em outra ordem,
+> e em `float` isso mexe no último bit. O critério byte a byte terá de virar
+> tolerância relativa — decidir o limiar **antes** de escrever kernel, com a
+> curva do V4 na mão.
 
 ## Os números
 
-Entrada: `Cov0.txt` com `9 20 4.086 radius,depth,lattice` (a cópia que gerou esta
-base está aqui ao lado). Binário `randmscd_parallel` de 04/08 11:49, sem
-modificação. `mpirun --use-hwthread-cpus -np 6`.
+Entrada: `Cov0.txt` com `9 20 4.086 radius,depth,lattice` e `ps01 psAg111.txt`
+(a cópia que gerou esta base está aqui ao lado). Curva de referência:
+`saida.txt`, o V2 do commit 5cac3b1, reproduzido byte a byte em 05/08.
 
 | | |
 |---|---|
-| factors (R-factor) | **0.6719 0.8649** |
-| tempo, regime | **70 ± 2 s** (68,0 / 69,9 / 70,3 / 71,9) |
-| tempo, 1ª rodada fria | 100,5 s — **descartar** |
-| pico de RSS | 582 MB |
-| `natoms` | 247 (era 205 com profundidade 15) |
-| `nsymm` final | 1525 (inicial 3050, **1 Reanalyzing**) |
-| `ntrieven` | 823 318 trios distintos, de 247³ = 15 069 223 |
+| factors (R-factor) | **0.6710 0.8642** |
+| pico de RSS | **313 MB** (`/usr/bin/time -f %M`, np=1) |
+| `natoms` | 247 |
+| `nsymm` final | 1525 (inicial 247²/20 = 3050, **1 Reanalyzing**) |
+| `ntrieven` | **795 605** trios distintos, de 247³ = 15 069 223 |
 | `ndbleven` | 40 562 |
+| `npoint` | 779 (19 θ × 41 φ), × 5 sub-direções = 3895 solves |
 
-Dispersão de 3% entre rodadas: **ganho abaixo de ~5% é ruído**, não conclua nada
-com uma rodada só.
+O `ntrieven` **depende do k**: `mscdrunb_not_reanalize.cpp:411` faz
+`vlenc = kmin/100.0f`, e esse `vlenc` entra na largura do bin de deduplicação.
+Era 823 318 em k = 16,00. A dedup do `symtrivert` não é puramente geométrica.
+
+Dispersão típica entre rodadas na campanha fria: 0,4% em `np` baixo, até 7% em
+`np` alto. **Ganho abaixo de ~5% em `np` alto é ruído**, não conclua nada com
+uma rodada só.
+
+## As campanhas
+
+| script | o que compara | quando |
+|---|---|---|
+| `campanha.sh` | V0 × V2, todos os `np` | 04/08/2026 20:47 |
+| `campanha-v4.sh` | V2 × V4, todos os `np` | 05/08/2026 01:0x |
+
+Ambas **apendam** em `escala.csv`, que tem uma coluna `janela` (a data). O
+`escala.py` usa a janela mais recente de cada versão e **imprime a deriva do V2
+entre as duas** — é isso que diz se comparar versões medidas em dias diferentes
+é legítimo. Na prática deu +0,8% em média, +6,5% no pior `np`.
+
+Binários preservados, um por versão: `randmscd_parallel.baseline` (V0 original),
+`.v2` e `.v4` (build de produção de 05/08). **Não recompile por cima.**
 
 ## Como medir sem se enganar
 
@@ -81,7 +101,15 @@ Três erros cometidos nesta campanha, todos com custo real de tempo:
    evidência morre com o processo:
    `sudo gdb -p PID -batch -ex "bt 25" -ex "info registers rip"`.
 
-## Onde vão os 70 s
+## Onde vão os 70 s — **do V0, na configuração de k = 16**
+
+> Seção histórica: descreve o V0 antes do V1/V2/V4 e antes da correção do k.
+> Guardada porque explica **por que** a fase C do `symtrivert` foi atacada
+> primeiro. **Não use estes números.** Os atuais estão no `../OTIMIZACAO.md`:
+> preparo serial ~11 s com a máquina leve, e o laço — que aqui era uma caixa
+> preta de 30,7 s — está perfilado por dentro desde 05/08/2026, com o
+> `alldblevent` respondendo por 57% dele no V4 (49,6% quando medido no V2 —
+> a fatia dele cresce à medida que o resto do laço encolhe).
 
 Build com `-DMSCDTIMER` (ver `mscdtimer.h`), `-np 6`. A rodada instrumentada deu
 70,42 s e curva idêntica — os cronômetros não custam nada.
@@ -113,9 +141,7 @@ exatamente `natoms³` ints — a C vira uma passada de remapeamento.
 ## Atenção
 
 `saida1Co-alterado-alexandre.txt` é ao mesmo tempo o arquivo de saída (campo `pe`
-do `Cov0.txt`) e um arquivo versionado. **Toda rodada sobrescreve ele.** A versão
-no HEAD é da configuração antiga (profundidade 15, 205 átomos, factors
-0.6724 0.8647) — por isso ele aparece modificado no `git status`.
-
-As medições do `README.md` da raiz (tabela de `-np`, `symtrivert` = 9,4 s) são da
-configuração de profundidade 15 e **não** comparam com esta.
+do `Cov0.txt`) e um arquivo versionado. **Toda rodada sobrescreve ele** — por
+isso ele aparece modificado no `git status` depois de qualquer execução. As
+linhas que mudam entre rodadas idênticas são só as de data e duração; se mudar
+mais que isso, a física mudou.

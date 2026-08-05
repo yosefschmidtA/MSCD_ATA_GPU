@@ -3,8 +3,11 @@
 # Uso: ./baseline/regressao.sh [np]     (np default 6)
 #
 # Criterio: as linhas de DADOS de saida1Co-alterado-alexandre.txt tem de ser
-# identicas byte a byte. O rodape ("This calculation took ... starting on ...")
-# traz data e duracao e e' descartado -- so ele varia entre rodadas iguais.
+# identicas byte a byte. Descartadas as linhas de data/duracao, as unicas que
+# variam entre rodadas iguais: o rodape ("This calculation took ... starting
+# on ...") e o cabecalho ("calculated by <user> on <data>"). O cabecalho entrou
+# no filtro em 05/08/2026 -- sem ele a regressao acusa 1 linha de diferenca
+# sempre que a base e a rodada caem em dias diferentes.
 set -u
 NP=${1:-6}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -12,7 +15,7 @@ BASE=$ROOT/baseline
 OUT=$ROOT/saida1Co-alterado-alexandre.txt
 TMP=${TMPDIR:-/tmp}/regr.$$
 
-corpo() { grep -v -E "This calculation took|starting on|and ending on" "$1"; }
+corpo() { grep -v -E "This calculation took|starting on|and ending on|calculated by" "$1"; }
 
 cd "$ROOT" || exit 1
 [ -f "$BASE/saida.txt" ] || { echo "sem linha de base em $BASE"; exit 1; }

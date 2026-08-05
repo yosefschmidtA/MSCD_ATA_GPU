@@ -7,7 +7,7 @@ Copyright (c) Van Hove Group 1997-1998. All rights reserved
 -----------------------------------------------------------------
  angle-resolved photoemission extended fine structure (ARPEFS)
  multiple scattering calculation of Ag(111)-3d
- calculated by Guilherme (IFGW) on Aug  4, 2026
+ calculated by Guilherme (IFGW) on Aug  5, 2026
 
    initial angular momentum (li) = 1   msorder=  8   raorder= 4
    photon polarization angle (polar,azimuth) =(  30.0   0.0 ) (deg)
@@ -842,7 +842,7 @@ fitted parameters ( nfit =  0  nfollow =  0  )
    r-factora=sum((chic-chie)*(chic-chie))/(sum(chic*chic+chie*chie)
    r-factorb=sum(chic*chic-chie*chie)/sum(chic*chic+chie*chie)
 
-This calculation took   10 processor minutes on   12 Linux Cluster
-     starting on Tue Aug  4 20:37:04 2026
-   and ending on Tue Aug  4 20:37:53 2026
+This calculation took  212 processor seconds on    4 Linux Cluster
+     starting on Wed Aug  5 01:57:28 2026
+   and ending on Wed Aug  5 01:58:22 2026
 

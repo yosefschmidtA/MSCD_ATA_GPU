@@ -9,7 +9,7 @@ Copyright (c) Van Hove Group 1997. All rights reserved
 
 un    "Guilherme (IFGW)"   user name
 sn      Ag(111)-3d      system name
-ps01    psAg111.txt
+ps01    psAg111-slab.txt
 ps02    psl9.txt        input phase shift data file
 rm01    rml9.txt        input radial matrix data file
 ex      Cobalt108.mscd             experimental data file
