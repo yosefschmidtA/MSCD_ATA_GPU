@@ -379,7 +379,10 @@ int Mscdrun::precutable()
   }
   pemeven=0.0f;
   if ((error==0)&&(pathcut>0.0))
-  { for (ib=0;ib<natoms;++ib)
+  {
+#pragma omp parallel for collapse(2) schedule(static) \
+    private(ia,id,k,eledim,memadd,xb) reduction(max:pemeven)
+    for (ib=0;ib<natoms;++ib)
     { for (ic=0;ic<natoms;++ic)
       { if (ic==ib) continue;
         for (ia=0;ia<natoms;++ia)
@@ -401,6 +404,7 @@ int Mscdrun::precutable()
     { for (ic=0;ic<natoms;++ic) bsum[ib*natoms+ic]=1.0f/pemeven;
     }
   }
+  MSCDT("  precut maximo do pemeven");
   /* A ordem (ib,ic,ia) parece ruim -- o indice e' id=ia*natoms^2+..., entao
      cada passo de ia salta natoms^2 = 244 KB dentro de tevenadd/tevendim.
      MEDIDO: inverter para (ia,ib,ic) deixa 27% MAIS LENTO (8,6 s -> 10,9 s).
@@ -412,6 +416,16 @@ int Mscdrun::precutable()
   { for (ib=0;ib<natoms;++ib)
     { for (ic=0;ic<natoms;++ic) asum[ib*natoms+ic]=bsum[ib*natoms+ic];
     }
+    /* O laco de ia FICA sequencial dentro da thread de proposito: cxa e' uma
+       soma em float, e so' assim a ordem das parcelas continua a mesma da
+       versao serial -- que e' a condicao para a curva sair identica bit a bit.
+       Reduzir cxa entre threads mudaria o ultimo bit, e a saida deste laco e'
+       uma MASCARA discreta (xb>pathcut): um bit vira um trio que entra ou sai
+       da conta, nao um erro pequeno.
+       A corrida em tevencut e' real e benigna: todos os ic de um mesmo (ia,ib)
+       escrevem o mesmo slot, mas so' 0->1, e o valor nao decide nada aqui. */
+#pragma omp parallel for collapse(2) schedule(static) \
+    private(ia,id,k,memadd,xa,xb,xc,xd,xe,xf,cxa)
     for (ib=0;ib<natoms;++ib)
     { for (ic=0;ic<natoms;++ic)
       { if (ic==ib) continue;

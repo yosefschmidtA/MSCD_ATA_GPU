@@ -11,6 +11,12 @@ usuário** — não rode `add`, `commit`, `tag` nem `push`; entregue o comando p
 **Antes de abrir qualquer `.cpp`, leia estes** — eles existem justamente
 para economizar leitura de código:
 
+- **`PLANO_CUDA.md`** — o plano do port, escrito em 05/08/2026 sobre o V5. Traz
+  o **critério de validação já decidido e medido** (`max |Δχ| ≤ 1e-4`, com o piso
+  de ruído de ponto flutuante do programa medido em 1,0×10⁻⁵), as quatro fases na
+  ordem, o que sobe para a placa, e o desenho da figura final do paper. **Leia
+  antes de escrever qualquer `.cu`.**
+
 - **`OTIMIZACAO.md`** — **o mais atual, comece por aqui**. Abre com a seção
   **COMO CONTINUAR**, que diz em que estado o código está, qual é a próxima ação
   pendente e o que já foi decidido e não deve ser refeito. Depois: diagnóstico,
@@ -19,11 +25,11 @@ para economizar leitura de código:
 - **`baseline/README.md`** — a linha de base congelada e o critério de validação
   (`baseline/regressao.sh`: as 787 linhas de intensidade têm de sair idênticas
   byte a byte).
-- **`README.md`** — caderno de laboratório. A fatoração caro/barato da eq. (46)
-  que organiza o programa inteiro, o grafo das equações, onde está (e onde não
-  está) o paralelismo. **Atenção: os números dele são da configuração antiga**
-  (profundidade 15, 205 átomos) e a descrição das fases do `symtrivert` é do
-  código antes da reescrita.
+- **`README.md`** — caderno de laboratório, **atualizado em 05/08/2026**. A
+  fatoração caro/barato da eq. (46) que organiza o programa inteiro, a tabela das
+  versões, o perfil do laço por dentro, o grafo das equações, e onde está (e onde
+  não está) o paralelismo. Tem blocos "Correção de 05/08/2026" marcando duas
+  afirmações que o perfil desmentiu — leia-os, o erro é a lição.
 - **`EQUACOES.md`** — as ~40 equações do manual (`MANUAL_MSCD_CEA.pdf`) mapeadas
   para arquivo:linha, nos dois sentidos.
 
@@ -40,8 +46,25 @@ Três otimizações aplicadas, todas com curva idêntica byte a byte:
 - **V4** (`mscdrund.cpp:128`): o teste do `tevencut` movido para **antes** de
   encher o `csum`. 99,87% dos pares saem no `continue`, então encher antes era
   ler 15 complexos para jogar fora — ~199 GB de tráfego na corrida inteira.
+- **V5** (`mscdrunc.cpp:394` e `:427`): dois `#pragma omp parallel for` no
+  `pathcut`. **Laço de 7,27 s → 1,71 s (4,3×)**; total em `np=1` de 125,69 s
+  para **120,44 s (4,2%)**, curva idêntica byte a byte nas seis rodadas.
+  **Só vale com `--bind-to none`** — ver Armadilhas. Sem `-fopenmp` os pragmas
+  somem e o binário é byte a byte igual ao V4 (verificado com `cmp`).
+  **Não ajuda com `np>1`**: o preparo é só do rank 0 e os outros ranks giram em
+  espera ativa, então não há núcleo livre.
 
 Campanha de 05/08: **V0 69,70 s → V4 44,05 s (1,58×)** em `np=12`.
+
+**Preparo serial cronometrado inteiro em 05/08** (`np=1`, máquina leve, ~10,8 s
+antes do V5): `pathcut` 7,13 s (66%), `symtrivert` 1,28 s, `alltrievent` 1,18 s,
+`symdblvert` 0,80 s, `allrotation` 0,15 s, resto 0,29 s. **`allrotation` não é
+gargalo** — são 15 milhões de iterações com `atan2`/`acos`, mas o guarda
+`if (eledim<2)` (`mscdrunc.cpp:742`) poda quase tudo. Hipótese testada e
+descartada. **Com o V5 o preparo é ~5,4 s**, e o teto de Amdahl para o port de
+GPU subiu de **12,2× para 22,3×** — sem uma linha de CUDA. O preparo deixou de
+ser o assunto; o próximo item serial é o `symtrivert` com 1,28 s, que não vale o
+risco.
 
 **O laço dos 779 pontos foi perfilado por dentro em 05/08** e o resultado
 contraria o que se supunha por leitura do código: **`alldblevent` é 57% do
@@ -73,11 +96,11 @@ doze; estão compilados e funcionando, e não interessam.
 ## Compilar e rodar
 
 ```bash
-make randmscd_parallel CPPFLAGS="-O3 -std=c++98 -w -fpermissive"
-mpirun --use-hwthread-cpus -np 4 randmscd_parallel Cov0.txt
+make randmscd_parallel CPPFLAGS="-O3 -std=c++98 -w -fpermissive -fopenmp"
+mpirun --use-hwthread-cpus --bind-to none -np 1 randmscd_parallel Cov0.txt
 ```
 
-As duas flags são obrigatórias, não preferência:
+As duas primeiras flags são obrigatórias, não preferência:
 
 - **`-fpermissive`** — `fcomplex.h:46` declara `friend Fcomplex polar(float,float=0)`.
   Argumento padrão em `friend` que não é definição: ilegal no padrão, aceito pelos
@@ -86,22 +109,39 @@ As duas flags são obrigatórias, não preferência:
   i5-13420H), não threads (12), e desde a série 3.x recusa superalocar em vez de
   aceitar calado como a 1.10 fazia. Sem ela, `-np 10` morre em "not enough slots".
 
+As outras duas são do V5: **`-fopenmp`** liga os pragmas do `pathcut` (sem ela o
+binário é byte a byte idêntico ao V4), e **`--bind-to none`** é o que faz o
+OpenMP existir de verdade — ver Armadilhas.
+
+**`--bind-to none` só com `np=1`.** Medido em 05/08/2026: em `np=1` ela vale
+5,25 s; em `np=12` os dois modos empatam (`padrao` 39,00 s, `bindnone` 42,08 s) —
+o preparo é do rank 0 e os outros ranks ocupam os núcleos, então não há o que o
+OpenMP pegar. **`--map-by slot:PE=$(nproc)` não serve para `np` alto**: com
+`-np 12` ela pede 144 PEs e o `mpirun` morre em 0,03 s.
+
 Referência de saída correta: `factors = 0.6710 0.8642`, curva em
 `saida1Co-alterado-alexandre.txt`. **Os `factors` não servem de teste de
 regressão** — mudaram só de 0.6719 0.8649 para 0.6710 0.8642 quando 783 das 787
 linhas de intensidade mudaram, porque são fatores de escala do ajuste.
 
-**Use `-np ≥ 4`, e evite `-np 6`.** Mínimo das repetições; V0 é de 04/08, V2 e V4
-de 05/08 (`baseline/campanha-v4.sh`, build de produção sem `-DMSCDTIMER`):
+**Use `-np ≥ 4`, e evite `-np 6`.** Mínimo das repetições. **Quatro janelas
+diferentes**: V0 de 04/08; V2 e V4 de 05/08 madrugada (`baseline/campanha-v4.sh`);
+V5 de 05/08 tarde (`baseline/campanha-v5-escala.sh`). Build de produção sem
+`-DMSCDTIMER`. **Compare colunas com cuidado** — a deriva entre janelas medida
+entre a madrugada e a tarde de 05/08 foi de ~5% com o mesmo binário:
 
-| `-np` | V0 | V2 | V4 |
-|------:|---------:|---------:|---------:|
-| 1 | 146,49 s | 144,52 s | 132,45 s |
-| 2 | 87,53 s | 77,49 s | 71,45 s |
-| 4 | 64,26 s | 51,07 s | 45,93 s |
-| 6 | 70,97 s | 53,29 s | 46,08 s |
-| 8 | 69,06 s | 49,30 s | 44,67 s |
-| 12 | 69,70 s | 47,92 s | **44,05 s** |
+| `-np` | V0 | V2 | V4 | V5 |
+|------:|---------:|---------:|---------:|---------:|
+| 1 | 146,49 s | 144,52 s | 132,45 s | **122,02 s** |
+| 2 | 87,53 s | 77,49 s | 71,45 s | 69,82 s |
+| 4 | 64,26 s | 51,07 s | 45,93 s | 40,50 s |
+| 6 | 70,97 s | 53,29 s | 46,08 s | 39,50 s |
+| 8 | 69,06 s | 49,30 s | 44,67 s | 38,84 s |
+| 12 | 69,70 s | 47,92 s | 44,05 s | **38,77 s** |
+
+Figura V0 × V5 em `baseline/v0-v5.png` (gerada por `baseline/figura-v5.py`), com
+o aviso da deriva no rodapé. **A coluna V5 em `np≥2` não é ganho do V5** — o
+OpenMP não age lá; é a mesma física do V4 medida numa janela mais rápida.
 
 **Não afirme um `np` ótimo.** Em 04/08 o `np=4` ganhava do `np=6` nos quatro
 pareamentos e foi declarado ótimo; em 05/08 a ordem é `12 < 8 < 4 < 6` e o
@@ -119,6 +159,81 @@ não a estabilidade dela entre janelas.
 *(Versões anteriores deste arquivo erraram aqui três vezes: `-np 10` = 41,4 s;
 depois `-np 6` = 41,4 s; depois `-np 4` como ótimo estabelecido. As duas
 primeiras mediram mal; a terceira mediu bem, mas generalizou uma janela só.)*
+
+## Port de GPU — o que já está decidido pela medição
+
+O objetivo do repositório (`MSCD_ATA_GPU`). **Nada de CUDA foi escrito ainda.**
+Tudo abaixo veio de medição em 05/08/2026, não de leitura — e a leitura já errou
+duas vezes aqui, ver os blocos "Correção" do `README.md`.
+
+**Perfil do laço dos 779 pontos** (`np=1`, V4, acumuladores fechando em 99,7%):
+
+| bloco | % do laço | onde |
+|---|---:|---|
+| **`alldblevent`** | **57,0%** | `mscdrunc.cpp:753` |
+| `summation` — laço de `m` | 22,1% | `mscdrund.cpp:108` |
+| `summation` — bloco final | 9,0% | `mscdrund.cpp:183` |
+| `allevendetec` | 8,8% | `mscdrunc.cpp:879` |
+| `summation` — init do `asum` | 3,1% | `mscdrund.cpp:97` |
+
+**O alvo é `alldblevent` → `evenelem`** (`mscdrunc.cpp:22`): 40 562 pares
+distintos, cada um chamando `evenelem` até 15 vezes, e `evenelem` é a soma sobre
+`l` com `lnum=20`. Tarefas independentes, aritmética densa, escrita coalescida em
+`devenelem[j*radim+…]`, tabelas pequenas (deslocamento de fase, Hankel,
+harmônicos) que cabem em memória constante.
+
+**Não perca tempo com o laço de `m`.** Ele parece o núcleo e não é: **99,87% das
+90,2 milhões de visitas `(m,ia,ib,ic)` são podadas pelo `tevencut`**, sobram
+1 455 trios com 14 724 MACs no total. O custo dele é tráfego de memória (as
+cópias `bsum ← asum` e do `csum`), não conta. Metade já foi eliminada pelo V4 no
+CPU; a outra metade também é problema de CPU, não de GPU. **A divergência de
+`evedim` não é problema** — não há trabalho para divergir.
+
+Fatos que o port pode usar:
+
+- **A energia nunca muda** (`kmin=kmax=13,63`), então `alltrievent` roda uma vez
+  e as tabelas de geometria são constantes na corrida inteira: sobem para a GPU
+  **uma vez**. ~313 MB, ~25 ms em PCIe 4 — irrelevante contra ~125 s.
+- **`Fcomplex` é `{float re, im}`** (`fcomplex.h:31`), mesmo layout de `float2`.
+  Mas o `friend` com argumento padrão de `fcomplex.h:46` — o que exige
+  `-fpermissive` — vai barrar o front-end de device: escreva um tipo próprio.
+- **`tevenpar` é AoS de passo 10 floats** e o laço lê 2 campos: separar em arrays
+  próprias é obrigatório. Já as quatro arrays `natoms³` são indexadas pelo mesmo
+  `id` com `ic` variando mais rápido — **isso já é coalescido** se thread↦`ic`.
+- **Amdahl**: preparo serial ~11,4 s de 132,45 s em `np=1` ⇒ **teto 11,6×** se só
+  o laço for para a GPU. Para passar disso é preciso levar o `pathcut` junto
+  (7,9 s dos 11,4 s). O `symtrivert` (1,4 s) não vale o risco.
+- **Com uma GPU, `np>1` perde o sentido** para o laço — e isso é bônus: some a
+  espera ociosa dos trabalhadores e some o `sendjobs` (que também é o que faz o
+  RSS ir de 313 MB para 581 MB).
+
+**A validação byte a byte não sobrevive ao port.** A redução soma em outra ordem
+e em `float` isso mexe no último bit. O critério do `baseline/regressao.sh` terá
+de virar tolerância relativa — **decida o limiar antes de escrever kernel**, com
+a curva do V4 na mão. O R-factor sozinho não serve de teste: ele mal se moveu
+quando 783 das 787 linhas mudaram.
+
+## Como medir neste projeto (custou tempo real aprender)
+
+- **A carga da máquina quase dobra as fases seriais** (`symtrivert` 1,37 s com a
+  máquina leve, 2,72 s com o navegador aberto). Confira `/proc/loadavg` e
+  `ps -eo args | grep -cE "^mpirun|^randmscd"` antes de medir.
+- **Normalize por um bloco intocado.** Foi assim que o V4 foi medido sem máquina
+  dedicada: o `alldblevent`, que a mudança não tocou, variou 3,3% enquanto o laço
+  de `m` caía 43%. Sem isso o tempo de parede não conclui nada.
+- **Só compare medições da mesma janela.** O `escala.csv` tem coluna `janela` e o
+  `escala.py` imprime a deriva do V2 entre elas justamente para isso.
+- **Meça sempre o braço de controle na mesma janela, mesmo quando "já se tem o
+  número".** Custa duas rodadas e é a única coisa que separa o efeito da deriva.
+  Caso concreto do V5 (05/08/2026): o V4 tinha 132,45 s de `np=1` da janela
+  anterior; contra ele o V5 pareceria ganhar **12,01 s (9,1%)**. Medido o
+  controle na mesma janela (125,69 s), o ganho real é **5,25 s (4,2%)** — a
+  janela inteira estava 5% mais rápida. Sem o controle o anúncio teria sido mais
+  que o dobro do verdadeiro.
+- **Pareamento não prova estabilidade.** Duas campanhas concluíram `np` ótimos
+  diferentes com o mesmo teste. Ver "Use `-np ≥ 4`" acima.
+- **Build com `-DMSCDTIMER` não serve para medir tempo total**: o `summation` faz
+  um passe extra de histograma na primeira chamada (~1 s).
 
 ## Arquitetura do paralelismo
 
@@ -140,6 +255,13 @@ Foi ela que permitiu trocar de versão de MPI sem tocar em cálculo nenhum.
 
 ## Armadilhas
 
+- **O Open MPI amarra o processo a um núcleo, e isso mata o OpenMP em silêncio.**
+  Com `np` baixo o binding padrão é *bind-to core*: as 12 threads do
+  `#pragma omp` do V5 ficam empilhadas num núcleo só. Medido em 05/08/2026: o
+  laço do `pathcut` deu **7,269 s com binding padrão e 1,706 s com
+  `--bind-to none`** — mesmo binário, mesma máquina, ganho zero contra 4,3×.
+  Não há aviso nenhum. Se uma paralelização OpenMP "não fez nada", **confira o
+  binding antes de culpar o código**: `mpirun --report-bindings`.
 - **Se o programa girar a 100% de CPU sem escrever nada, é `phase.cpp`, não
   contenção.** `phase.cpp:312-313` deixa `i=0` passar (o guarda `if (i<0) i=0` é
   código morto; devia ser `if (i<1) i=1`), e a linha 316 então lê `phasea[-60]`,

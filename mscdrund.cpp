@@ -217,6 +217,7 @@ int Mscdrun::intensity(int afitmath,float *afit,float *xdata,
   float xdetec[6],polaron[10];
   Fcomplex *asum,*bsum,*csum;
   MSCDT_ADECL;
+  MSCDT_DECL;
 
   asum=bsum=csum=NULL;
   if ((error==0)&&(mype==0)&&((!xdata)||(!ydata)||(!ymod))) error=901;
@@ -254,9 +255,13 @@ int Mscdrun::intensity(int afitmath,float *afit,float *xdata,
     if ((error==0)&&((fitmode==5)||(fitmode==6)))
       error=makeatoms(0.0f);
     if ((trynum==0)||(fitmode==5)||(fitmode==6))
-    { if (error==0) error=maketripar();
+    { MSCDT("  (antes de maketripar)");
+      if (error==0) error=maketripar();
+      MSCDT("  maketripar");
       if (error==0) error=makedblpar();
+      MSCDT("  makedblpar");
       if (error==0) error=allrotation();
+      MSCDT("  allrotation natoms^3");
     }
 
     if (error==0) error=dispintensity(2);

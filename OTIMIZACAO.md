@@ -790,6 +790,205 @@ desnecessária — só as entradas `(ib,ic)` efetivamente lidas importam, e são
 poucas. Mas a semântica exige cuidado (as entradas não reescritas têm de manter o
 valor da passada anterior), então não é troca de uma linha. **Não tentado ainda.**
 
+## V5 — OpenMP no `pathcut`
+
+Feito em 05/08/2026, na sessão do port de GPU. **A curva sai idêntica byte a
+byte**; o efeito no tempo *total* ainda não foi medido em campanha (ver
+"Pendente" no fim da seção).
+
+### Primeiro, o preparo serial foi cronometrado inteiro
+
+Faltavam marcas em `maketripar`, `makedblpar` e `allrotation` — foram
+acrescentadas em `mscdrund.cpp:257-263`. `np=1`, build `-DMSCDTIMER`, máquina
+leve (`load 0.45`, nenhum outro job):
+
+| etapa serial | tempo | % do preparo |
+|---|---:|---:|
+| **laço do `pathcut`** | **7,134 s** | **66%** |
+| `symtrivert` (A+B+C+D) | 1,280 s | 12% |
+| `alltrievent` | 1,181 s | 11% |
+| `symdblvert` | 0,797 s | 7% |
+| `allrotation` (`natoms³`) | 0,151 s | 1,4% |
+| `maketripar`+`makedblpar`+resto | 0,29 s | 3% |
+| **total** | **~10,8 s** | |
+
+Duas coisas caíram aqui:
+
+- **`allrotation` não é gargalo.** São 15 milhões de iterações com `atan2`,
+  `acos` e `sqrt`, e a suspeita era de que custasse segundos. **0,151 s.** O
+  guarda `if (eledim<2)` (`mscdrunc.cpp:742`) poda quase tudo antes da
+  trigonometria. Hipótese testada e descartada — não volte a ela.
+- **O cronômetro do `pathcut` media duas varreduras.** Entre o
+  `MSCDT("precut alltrievent")` e o `MSCDT("precut pathcut")` havia também o
+  laço do máximo do `pemeven` (`mscdrunc.cpp:381-396`, `natoms³`). Foi separado:
+  `pemeven` é **0,019 s** já paralelizado; o resto é o laço de `m`.
+
+### A mudança
+
+Dois `#pragma omp parallel for collapse(2)`, em `mscdrunc.cpp`: um no laço do
+máximo do `pemeven`, outro no laço `(ib,ic)` de dentro do laço de `m`. Sem
+`-fopenmp` os pragmas somem e o binário é **byte a byte igual ao V4** —
+verificado com `cmp` contra `baseline/randmscd_parallel.v4`.
+
+Por que é seguro, nos três pontos que importam:
+
+- **`tevendim[id]` não tem corrida.** `id = ia·natoms² + ib·natoms + ic` é único
+  por trio, e dentro de um `m` cada `id` é tocado uma vez.
+- **`tevencut` tem corrida, e ela é benigna.** Todos os `ic` de um mesmo
+  `(ia,ib)` escrevem o mesmo slot, mas o padrão é `if (…==0) …=1` — monótono
+  0→1 — e o valor não decide nada dentro do laço. Qualquer entrelaçamento
+  termina em 1.
+- **O laço de `ia` fica sequencial dentro da thread.** `cxa` é soma em `float`;
+  só assim a ordem das parcelas é a mesma da versão serial, que é a condição
+  para a curva sair idêntica. **Isto importa mais aqui do que no laço dos
+  pontos**: a saída do `pathcut` é uma máscara discreta (`xb>pathcut`), então
+  uma diferença de último bit não vira erro pequeno, vira um trio que entra ou
+  sai da conta. Reduzir `cxa` entre threads seria um tiro no pé.
+
+### O V3 se inverte aqui
+
+O V3 tentou trocar a ordem para `(ia,ib,ic)` e piorou 27%, porque `xa` e `cxa`
+deixavam de viver em registrador e viravam acumuladores em memória. Na
+decomposição do V5 cada thread tem **os seus** `xa`/`cxa` em registrador, e a
+ordem dos laços continua a original. **O resultado negativo do V3 não
+contraindica o V5 — ele explica por que a decomposição tem de ser thread↦`(ib,ic)`
+com `ia` por dentro.** É a mesma decomposição que o kernel de CUDA vai usar.
+
+### A armadilha do binding — custou uma medição inteira
+
+Primeira medição com OpenMP: `pathcut` **7,269 s**, ou seja, ganho zero. A causa
+não é o código:
+
+**O Open MPI amarra o processo a um núcleo com `np` baixo**, e as 12 threads
+OpenMP ficaram empilhadas nesse núcleo. Com `--bind-to none`:
+
+| | `pathcut` | `precutable` |
+|---|---:|---:|
+| binding padrão | 7,269 s | 8,734 s |
+| `--bind-to none` | **1,706 s** | **3,178 s** |
+
+**4,3× no laço.** Sem a flag, o OpenMP neste programa não faz absolutamente
+nada — e não avisa.
+
+### Validação
+
+`np=1`, `--bind-to none`, 12 threads disputando de verdade o `tevencut`:
+**curva idêntica byte a byte** à `baseline/saida.txt`. RSS 313 MB, inalterado.
+
+### O efeito no tempo total — campanha de 05/08/2026
+
+`./baseline/campanha-v5-binding.sh 1 2`, mesma janela, aquecimento descartado,
+pausa de 45 s, `load` inicial 0,29. Dados em `baseline/binding.csv`.
+
+| modo de binding | rep 1 | rep 2 | mínimo | média |
+|---|---:|---:|---:|---:|
+| `padrao` (OpenMP neutralizado) | 127,29 s | 125,69 s | **125,69 s** | 126,49 s |
+| `--bind-to none` | 120,44 s | 122,32 s | **120,44 s** | 121,38 s |
+| `--map-by slot:PE=12` | 125,51 s | 120,87 s | **120,87 s** | 123,19 s |
+
+**Ganho do V5: 5,25 s (4,2%)**, de 125,69 s para 120,44 s pelo mínimo — e 5,11 s
+(4,0%) pela média, que é a mesma coisa dentro do ruído. Curva idêntica byte a
+byte nas **seis** rodadas.
+
+**A economia do preparo chega inteira ao total.** O `pathcut` economizou 5,56 s
+(7,269 → 1,706) e o total caiu 5,25 s. Ou seja: **`--bind-to none` não prejudica
+o laço dos pontos** — a hipótese (a) era falsa.
+
+**Entre `--bind-to none` e `PE=12` a campanha não decide.** Os mínimos empatam
+(120,44 contra 120,87) e a dispersão do `PE=12` é **4,64 s**, maior que o efeito
+procurado. Além disso o `PE=12` rodou por último, com o `load` já em 1,10 contra
+0,29 do início — está confundido com a deriva. Fica `--bind-to none` no
+`README.md` por ter tido a dispersão mais apertada nesta janela, **não porque
+tenha ganhado**. Se alguém quiser fechar isso, são mais repetições e ordem
+sorteada.
+
+### Por que o braço de controle não era desperdício
+
+O V4 na campanha de 04-05/08 deu **132,45 s** em `np=1`. Se o `padrao` desta
+janela não tivesse sido medido e o ganho fosse calculado contra esse número:
+
+    132,45 - 120,44 = 12,01 s  ->  9,1% de ganho    (ERRADO)
+    125,69 - 120,44 =  5,25 s  ->  4,2% de ganho    (certo)
+
+**A janela de hoje está 5% mais rápida que a de ontem**, e sem o controle o
+ganho anunciado seria mais que o dobro do real. É a terceira vez que a deriva
+entre janelas aparece neste projeto. O controle na mesma janela **custa duas
+rodadas e é a única coisa que separa o efeito da deriva** — não corte.
+
+### O teto de Amdahl quase dobrou
+
+| | preparo serial | total `np=1` | teto se só o laço for para a GPU |
+|---|---:|---:|---:|
+| V4 | 10,8 s | 132,45 s | 12,2× |
+| **V5** | **5,4 s** | **120,44 s** | **22,3×** |
+
+O que sobrou de serial: `pathcut` 1,71 s, `symtrivert` 1,28 s, `alltrievent`
+1,18 s, `symdblvert` 0,80 s, `allrotation` 0,15 s, resto 0,29 s.
+
+**Isto é o resultado que mais importa para o port de GPU**: o teto subiu de 12×
+para 22× sem uma linha de CUDA, e o próximo item serial (`symtrivert`, 1,28 s)
+já não vale o risco. O preparo deixou de ser o assunto.
+
+### Escalabilidade V0 × V5
+
+`./baseline/campanha-v5-escala.sh 2`, 12 rodadas, **curva idêntica byte a byte em
+todas**. Mínimo das repetições. Figura por `baseline/figura-v5.py`.
+
+| `-np` | V0 (04/08) | V5 (05/08) | ganho |
+|------:|-----------:|-----------:|------:|
+| 1 | 146,49 s | **122,02 s** | 1,20× |
+| 2 | 87,53 s | 69,82 s | 1,25× |
+| 4 | 64,26 s | 40,50 s | 1,59× |
+| 6 | 70,97 s | 39,50 s | 1,80× |
+| 8 | 69,06 s | 38,84 s | 1,78× |
+| 12 | 69,70 s | **38,77 s** | 1,80× |
+
+![V0 contra V5](baseline/v0-v5.png)
+
+**Leia o rodapé da figura antes de citar o ganho.** O V0 é da janela de 04/08 e o
+V5 da de 05/08; o controle na janela do V5 mostrou ~5% de deriva. **Os números da
+coluna "ganho" são limite superior**, não valor medido em pareamento. Para fechar
+a conta seria preciso remedir o V0 na janela do V5 — não foi feito.
+
+O ganho **cresce com o `np`** e isso não é o V5: é que quanto mais ranks, menor o
+laço paralelo e mais pesa o preparo serial, que é onde V1/V2/V5 agiram. A barra
+de `np=1` (1,20×) é a menor justamente porque ali o laço domina — 115 s de 122 s.
+
+### Com `np>1` o V5 não ajuda — medido
+
+Previsto e confirmado. `./baseline/campanha-v5-binding.sh 12 2`, mesma janela:
+
+| modo | rep 1 | rep 2 |
+|---|---:|---:|
+| `padrao` | 43,31 s | **39,00 s** |
+| `--bind-to none` | 42,08 s | 44,56 s |
+
+Os dois modos empatam dentro do ruído — se o OpenMP estivesse fazendo alguma
+coisa, o `bindnone` ganharia como ganha em `np=1`. O motivo: o preparo roda só no
+rank 0 (`mscdjob.cpp:399`) enquanto os outros ranks giram em espera ativa no MPI,
+e **não há núcleo livre para o OpenMP pegar**. É consistente com o
+`--mca mpi_yield_when_idle 1` não ter ajudado.
+
+**Sem regressão em `np>1`**, que era o risco real (23 threads runnable em 12
+hardware threads durante o preparo). **O V5 é uma otimização do caminho `np=1`**,
+que é exatamente o caminho do port de GPU, onde `np>1` perde o sentido.
+
+### Um falso positivo de validação, achado no caminho
+
+O braço `--map-by slot:PE=12` com `-np 12` pede 144 PEs; o `mpirun` morreu em
+0,03 s — e o script **reportou "curva identica"**, porque comparou o
+`saida1Co-alterado-alexandre.txt` da rodada anterior, que ficou intacto no disco.
+Corrigido em `campanha-v5-binding.sh`: apaga a saída antes de cada rodada e
+checa o código de retorno. **Qualquer script de regressão deste projeto tem de
+apagar a saída antes de rodar** — senão "idêntica" pode significar "não rodou".
+
+**Com `np>1` o V5 tende a não ajudar**, e o motivo já está registrado: o preparo
+roda só no rank 0 (`mscdjob.cpp:399`) enquanto os outros ranks giram em espera
+ativa no MPI. Não há núcleo livre para o OpenMP pegar. Isso é consistente com o
+`--mca mpi_yield_when_idle 1` não ter ajudado. **O V5 é uma otimização para o
+caminho `np=1`** — que é exatamente o caminho do port de GPU, onde `np>1` perde
+o sentido.
+
 ## Depois do V2
 
 > **Parcialmente obsoleta desde 05/08/2026.** A ordem abaixo foi escrita quando

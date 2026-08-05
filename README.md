@@ -357,6 +357,16 @@ Enquanto isso os outros ranks estão parados dentro de `receivejobs()`. **Não �
 que essa parte escale mal: ela não é paralela de forma alguma.** Aumentar `-np`
 não pode ajudá-la nem em princípio.
 
+> **Correção de 05/08/2026 (tarde).** "Não é paralela de forma alguma" valia para
+> o **MPI**, e virou uma frase mais forte do que os fatos autorizam. O maior item
+> desse bloco — o laço do `pathcut`, 66% do preparo — **é dado-paralelo**: os
+> pares `(ib,ic)` são independentes dentro de cada passo de `m`, e o V5 o
+> paralelizou com dois `#pragma omp parallel for`, de 7,27 s para 1,71 s com a
+> curva idêntica byte a byte. O que é verdade é que **`-np` não ajuda** — o
+> preparo é do rank 0 e os outros ranks giram em espera ativa. A ferramenta certa
+> aqui é OpenMP (memória compartilhada, tudo já no espaço do rank 0), não MPI.
+> Detalhes e a armadilha do binding: seção "V5" do `OTIMIZACAO.md`.
+
 O que cada etapa serial faz:
 
 | etapa | o que calcula |
