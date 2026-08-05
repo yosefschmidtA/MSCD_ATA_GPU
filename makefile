@@ -69,6 +69,30 @@ mscdall : $(mscdexe) $(calchiexe) $(calnoxexe) $(caldifexe) \
 $(mscdexe) : $(mscdobj)
 	$(LINK.cc) $(mscdobj) -o $(mscdexe)
 
+# ---- port de GPU, Fase 1 (PLANO_CUDA.md) ----
+# O .cu e' compilado sozinho pelo nvcc: nenhum cabecalho do programa entra
+# nele, porque fcomplex.h:46 (o friend com argumento padrao que obriga o
+# -fpermissive) nao passa pelo front-end de device. Os .o do C++ tem de ser
+# construidos com -DMSCDGPU, entao o alvo exige rm -f *.o antes:
+#   rm -f *.o && make randmscd_gpu \
+#     CPPFLAGS="-O3 -std=c++98 -w -fpermissive -fopenmp -DMSCDGPU"
+#   MSCD_GPU=validate mpirun --use-hwthread-cpus -np 1 randmscd_gpu Cov0.txt
+NVCC     = nvcc
+# -fmad=false NAO e' opcional. O nvcc contrai a*b+c em FMA por padrao; o g++
+# aqui compila para x86-64 base, sem FMA, e nao contrai. A diferenca e' de 1
+# ulp, mas beta (indice de rotmata) e o k de fexpix sao INDICES INTEIROS
+# tirados de um float: 1 ulp perto da fronteira troca a entrada da tabela.
+# Medido: com FMA, 80.209 elementos acima de 1e-3 e maxrel 6,2.
+NVFLAGS  = -O3 -arch=sm_89 -lineinfo -fmad=false
+CUDALIBS = -lcudart
+gpuexe   = randmscd_gpu
+
+mscdgpu.o : mscdgpu.cu mscdgpu.h
+	$(NVCC) $(NVFLAGS) -c mscdgpu.cu -o mscdgpu.o
+
+$(gpuexe) : $(mscdobj) mscdgpu.o
+	$(LINK.cc) $(mscdobj) mscdgpu.o -o $(gpuexe) $(CUDALIBS)
+
 $(calchiexe) : $(calchiobj)
 	$(LINK.cc) $(calchiobj) -o $(calchiexe)
 

@@ -989,6 +989,70 @@ ativa no MPI. Não há núcleo livre para o OpenMP pegar. Isso é consistente co
 caminho `np=1`** — que é exatamente o caminho do port de GPU, onde `np>1` perde
 o sentido.
 
+## V6 — o `beta` inteiro: achado bom, otimização de CPU **reprovada**
+
+05/08/2026. O `PLANO_CUDA.md` mandava testar, antes de escrever kernel, se o
+`beta` que chega ao `makerotation` vindo do `alldblevent` é sempre inteiro. Se
+fosse, o fator de interpolação `(xa-i)` seria exatamente zero e as 500
+interpolações por par seriam **uma cópia de linha disfarçada**.
+
+### O teste — contadores, não leitura
+
+Contador em `makerotation` (`rotamat.cpp:336`), atrás de `-DBETATEST`, separado
+por origem porque `rotharma` tem dois chamadores:
+
+| origem | reconstruções | com `(xa-i) != 0` |
+|---|---:|---:|
+| **dentro de `alldblevent`** | 30 726 810 | **0** |
+| fora (`alltrievent`, `scatter.cpp:196`) | 11 286 832 | 11 180 536 |
+
+As 346 exceções de dentro são `beta=180` exato: `xa=360`, o `i` satura em 359 e
+o fator dá exatamente 1,0 — ainda é a linha 360 de `rotmata`, não interpolação.
+**`beta` nunca é negativo** (`neg=0` nas 42 milhões de chamadas), então o ramo
+de troca de sinal (`k==2,5,7,10,…`) é código morto nesta física.
+
+O contador continua no código, desligado. Ele é a única forma de reconferir isto
+se a configuração de física mudar — e a suposição não é gratuita: o kernel de
+GPU **inteiro** depende dela.
+
+### A otimização de CPU, medida e revertida
+
+`rotmatb` passou a ser um ponteiro (`rotmatp`) apontando para dentro de
+`rotmata` quando o fator é zero — nenhuma cópia. Saída **idêntica byte a byte**
+(`regressao.sh 4`). Campanha pareada e alternada contra o V5, mesma janela,
+quatro repetições:
+
+| rep | `np=1` | `np=12` |
+|---|---:|---:|
+| 1 | +1,71 s | −1,42 s |
+| 2 | +3,19 s | −0,40 s |
+| 3 | +0,98 s | −4,98 s |
+| 4 | +2,08 s | +0,73 s |
+| **média** | **+1,99 s (+1,5%)** | **−1,52 s (−3,5%)** |
+
+(positivo = V6 mais rápido)
+
+**Reprovado.** Em `np=1` os quatro pares concordam, mas 1,5% não paga; em
+`np=12`, que é produção, três dos quatro pioram. O mecanismo é claro e não é
+ruído: o `rotmatb` de 2 KB ficava sempre quente em L1, e o alias troca isso por
+linhas espalhadas dentro dos 722 KB do `rotmata`. Com `np=12` são doze processos
+brigando pelo mesmo L3.
+
+**Cuidado ao ler a coluna `np=12`:** o próprio V5 variou de 42,30 a 46,92 s (11%)
+nas quatro repetições. O braço é ruidoso; o que se pode afirmar é que **não há
+ganho lá**, não que a perda seja exatamente 3,5%.
+
+Ficou um comentário em `rotamat.cpp:360` avisando. **O nome V6 está queimado.**
+
+### Não tentado: copiar a linha em vez de apontar para ela
+
+Sobra um meio-termo que a medição não cobriu: manter o `rotmatb` (portanto a
+localidade de L1) mas trocar `a + 0*(b-a)` por uma cópia direta — metade das
+leituras e nenhuma multiplicação. Não é garantidamente byte a byte (`-0.0f`
+copiado continua `-0.0f`, enquanto `-0.0 + 0.0` dá `+0.0`), então exige o
+`regressao.sh`. Ganho esperado: menos que os 1,5% do V6, porque o custo real
+medido era a localidade, não a aritmética.
+
 ## Depois do V2
 
 > **Parcialmente obsoleta desde 05/08/2026.** A ordem abaixo foi escrita quando

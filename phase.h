@@ -76,6 +76,10 @@ class Phaseshift
     int savecurve(char *filename,char *usermessage);
     int kconfine(float *kmin,float *kmax,int *alnum);
     Fcomplex fsinexpa(float wavevec,int lquantum);
+    /* Port de GPU. phasec e' keyed em wavevec, que e' constante na corrida
+       (kmin==kmax), entao a foto vale para sempre. Ver mscdgpu.h. */
+    const Fcomplex *gpu_phasec() const { return phasec; }
+    int gpu_lnum() const { return lnum; }
 private:
     int makephase(float wavevec);
     int makesinexp(float wavevec);

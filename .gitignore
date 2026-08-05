@@ -4,6 +4,7 @@
 *.a
 randmscd
 randmscd_parallel
+randmscd_gpu
 calchi
 caldif
 calfac

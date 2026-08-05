@@ -69,6 +69,14 @@ class Hankel
     float getmemory();
     Fcomplex fhankelfac(int al,int am,float invkx);
     Fcomplex fhankelfaca(int al,int am,float invkx);
+    /* Port de GPU. hankarg e' o cache reconstruido: para hankb, cujo argumento
+       (vkb) e' sempre 0 em alldblevent, o device recebe uma foto dele em vez de
+       refazer o autômato de cache. Ver mscdgpu.h. */
+    const Fcomplex *gpu_hankmat() const { return hankmat; }
+    const Fcomplex *gpu_hankarg() const { return hankarg; }
+    int gpu_ndata() const { return ndata; }
+    int gpu_lnum() const { return lnum; }
+    int gpu_cmnum() const { return cmnum; }
 };
 
 class Expix
@@ -84,6 +92,10 @@ class Expix
     int paimport(char *source,int length=0);
     int makecurve();
     float getmemory();
+    /* Port de GPU -- ver mscdgpu.h */
+    const Fcomplex *gpu_cexpix() const { return cexpix; }
+    int gpu_ndata() const { return ndata; }
+    int gpu_mdata() const { return mdata; }
     Fcomplex fexpix(float x);
     Fcomplex fsinexp(float x);
 };

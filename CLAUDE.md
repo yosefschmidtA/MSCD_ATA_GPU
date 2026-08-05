@@ -11,11 +11,13 @@ usuário** — não rode `add`, `commit`, `tag` nem `push`; entregue o comando p
 **Antes de abrir qualquer `.cpp`, leia estes** — eles existem justamente
 para economizar leitura de código:
 
-- **`PLANO_CUDA.md`** — o plano do port, escrito em 05/08/2026 sobre o V5. Traz
-  o **critério de validação já decidido e medido** (`max |Δχ| ≤ 1e-4`, com o piso
-  de ruído de ponto flutuante do programa medido em 1,0×10⁻⁵), as quatro fases na
-  ordem, o que sobe para a placa, e o desenho da figura final do paper. **Leia
-  antes de escrever qualquer `.cu`.**
+- **`PLANO_CUDA.md`** — o plano do port. Traz o **critério de validação medido**
+  (`max |Δχ| ≤ 1e-4`, piso de ruído do programa em 1,0×10⁻⁵), as quatro fases na
+  ordem, e o desenho da figura final do paper. **Fases 0 e 1 estão FEITAS e
+  validadas (05/08/2026); a próxima é a Fase 2.** A seção "Armadilhas
+  específicas do port" tem quatro itens que **custaram depuração real** — leia
+  antes de escrever qualquer `.cu`, especialmente a regra de que **1 ulp aqui é
+  erro de índice, não de arredondamento**.
 
 - **`OTIMIZACAO.md`** — **o mais atual, comece por aqui**. Abre com a seção
   **COMO CONTINUAR**, que diz em que estado o código está, qual é a próxima ação
@@ -33,7 +35,26 @@ para economizar leitura de código:
 - **`EQUACOES.md`** — as ~40 equações do manual (`MANUAL_MSCD_CEA.pdf`) mapeadas
   para arquivo:linha, nos dois sentidos.
 
-## Estado atual (05/08/2026)
+## Estado atual (05/08/2026, fim da tarde)
+
+**A Fase 1 do port de CUDA está feita e validada.** `np=1` foi de **130,58 s
+(V5) para 64,15 s (2,04×)**, com `max|Δχ| = 1,0×10⁻⁵` — o piso de ruído do
+programa. Melhor rodada isolada depois: 59,84 s. **A próxima ação é a Fase 2**, e
+ela está escrita passo a passo no topo do `PLANO_CUDA.md`.
+
+**Mas o V5 com todos os núcleos ainda ganha:** `np=12` ≈ 42 s contra 60–64 s do
+build de GPU. O 2,04× é medido com os dois em `np=1`, que isola o kernel — **não
+é "a GPU ganhou do V5"**. Só 57% do laço está na placa; os outros 43% mais o
+preparo continuam num núcleo só. A GPU está praticamente ociosa (kernel + PCIe =
+~5 s dos 779 pontos), então as Fases 2 e 3 é que decidem. **A GPU também não toca
+no "Analyzing/Reanalyzing"** (`symtrivert`, do preparo) — esse é o alvo do V1/V2.
+
+**V6 (`beta` inteiro no `makerotation`) foi medido e REVERTIDO** — byte a byte
+idêntico, +1,5% em `np=1` e −3,5% em `np=12`. O achado que ele produziu é o que
+sustenta o kernel; a otimização de CPU, não. **O nome V6 está queimado; a próxima
+é V7.** Ver `OTIMIZACAO.md`, seção V6.
+
+## Estado do CPU (05/08/2026, manhã)
 
 Cluster de trabalho: **raio 9 / profundidade 20, 247 átomos** (`Cov0.txt`).
 Três otimizações aplicadas, todas com curva idêntica byte a byte:
@@ -96,9 +117,26 @@ doze; estão compilados e funcionando, e não interessam.
 ## Compilar e rodar
 
 ```bash
+# CPU (produção)
 make randmscd_parallel CPPFLAGS="-O3 -std=c++98 -w -fpermissive -fopenmp"
 mpirun --use-hwthread-cpus --bind-to none -np 1 randmscd_parallel Cov0.txt
+
+# GPU (Fase 1). O rm é obrigatório: os .o precisam de -DMSCDGPU, e o makefile
+# não tem alvo clean nem sabe distinguir as duas variantes.
+rm -f *.o && make randmscd_gpu \
+  CPPFLAGS="-O3 -std=c++98 -w -fpermissive -fopenmp -DMSCDGPU"
+./baseline/regressao-gpu.sh 1
 ```
+
+**Os dois builds compartilham os `.o` e se atropelam.** Depois de mexer no
+`randmscd_gpu`, `rm -f *.o` de novo antes de reconstruir o `randmscd_parallel`,
+senão ele sai com `-DMSCDGPU` dentro.
+
+Arquivos do port: **`mscdgpu.cu`** (kernel), **`mscdgpu.h`** (interface POD),
+cola em **`mscdrunc.cpp:768`** (`gpudblevent`), despacho em
+**`mscdrund.cpp:298`**. Acessores `gpu_*` em `rotamat.h`, `msfuncs.h`,
+`phase.h`, `vibrate.h` — só leitura, existem para não incluir cabeçalho do
+programa no `.cu`.
 
 As duas primeiras flags são obrigatórias, não preferência:
 
@@ -160,11 +198,31 @@ não a estabilidade dela entre janelas.
 depois `-np 6` = 41,4 s; depois `-np 4` como ótimo estabelecido. As duas
 primeiras mediram mal; a terceira mediu bem, mas generalizou uma janela só.)*
 
-## Port de GPU — o que já está decidido pela medição
+## Port de GPU — Fase 1 feita e validada
 
-O objetivo do repositório (`MSCD_ATA_GPU`). **Nada de CUDA foi escrito ainda.**
-Tudo abaixo veio de medição em 05/08/2026, não de leitura — e a leitura já errou
-duas vezes aqui, ver os blocos "Correção" do `README.md`.
+O objetivo do repositório (`MSCD_ATA_GPU`). **A Fase 1 existe e passa**
+(`mscdgpu.cu`, `mscdgpu.h`, cola em `mscdrunc.cpp:768`). Detalhes e a próxima
+ação em `PLANO_CUDA.md`. Em uma linha:
+
+```bash
+rm -f *.o && make randmscd_gpu \
+  CPPFLAGS="-O3 -std=c++98 -w -fpermissive -fopenmp -DMSCDGPU"
+./baseline/regressao-gpu.sh 1      # max|dchi| <= 1e-4
+```
+
+`MSCD_GPU=1` substitui a CPU, `MSCD_GPU=validate` roda as duas e compara par a
+par, sem a variável roda 100% no host. Resultado medido: **`max|Δχ| = 1,0×10⁻⁵`,
+que é o piso de ruído do próprio programa** — 10× abaixo do critério.
+
+**Três coisas que custaram depuração e estão em `PLANO_CUDA.md`:** `-fmad=false`
+é obrigatório no `nvcc`; a ordem das promoções float→double do código de 1998
+tem de ser copiada literalmente (`sqrt(1.0-cosa*cosa)` faz o quadrado em
+**float**); e **1 ulp aqui é erro de índice, não de arredondamento**, porque
+`beta`, o `k` de `fexpix` e o `i` de `fhankelfaca` são inteiros tirados de
+floats.
+
+O resto desta seção é o que a medição de 05/08/2026 estabeleceu **antes** do
+kernel existir, e continua valendo.
 
 **Perfil do laço dos 779 pontos** (`np=1`, V4, acumuladores fechando em 99,7%):
 
@@ -207,11 +265,11 @@ Fatos que o port pode usar:
   espera ociosa dos trabalhadores e some o `sendjobs` (que também é o que faz o
   RSS ir de 313 MB para 581 MB).
 
-**A validação byte a byte não sobrevive ao port.** A redução soma em outra ordem
-e em `float` isso mexe no último bit. O critério do `baseline/regressao.sh` terá
-de virar tolerância relativa — **decida o limiar antes de escrever kernel**, com
-a curva do V4 na mão. O R-factor sozinho não serve de teste: ele mal se moveu
-quando 783 das 787 linhas mudaram.
+**A validação byte a byte não sobrevive ao port** — feito: o critério está em
+`baseline/regressao-gpu.sh` (`max|Δχ| ≤ 1e-4`, `rms ≤ 1e-5`, sobre a coluna
+`chical`). O `baseline/regressao.sh` byte a byte **continua valendo sem
+alteração** para qualquer mudança de CPU e não deve ser relaxado. O R-factor e os
+`factors` servem de sanidade, nunca de critério.
 
 ## Como medir neste projeto (custou tempo real aprender)
 

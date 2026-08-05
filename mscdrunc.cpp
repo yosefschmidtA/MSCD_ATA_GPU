@@ -764,6 +764,169 @@ int Mscdrun::allrotation()
   return(error);
 } //end of Mscdrun::allrotation
 
+#ifdef MSCDGPU
+#include <stdlib.h>
+#include <string.h>
+#include "mscdgpu.h"
+extern "C" int mscdgpu_set_alnum(const int *alnum,int nkind);
+extern "C" int mscdgpu_set_hankb(const Gcplx *h);
+extern "C" int mscdgpu_get_dbg(float *out);
+extern "C" void mscdgpu_set_dbg(int on);
+
+/* Fase 1 do port (PLANO_CUDA.md). validate!=0: roda a GPU DEPOIS do
+   alldblevent da CPU e compara par a par, sem tocar em devenelem -- e' a
+   validacao isolada que o plano manda fazer antes de mexer em outro bloco.
+   validate==0: a GPU escreve devenelem e a CPU nao roda.
+
+   Ligado por MSCD_GPU=1 (substitui) ou MSCD_GPU=validate (compara). */
+int Mscdrun::gpudblevent(float akin,float *xdetec,int validate)
+{ static int ready=0;
+  static Gcplx *host=NULL;
+  static double wmaxabs=0.0,wmaxrel=0.0;
+  static long wcount=0,wbig=0;
+  int i;
+
+  if (!ready)
+  { Gconst k;
+    int al[8];
+    /* phase.cpp:28 aloca phasec com 61 entradas fixas, independente do lnum
+       do arquivo -- e o lnum DIFERE entre as especies (psAg111 e psl9), entao
+       o passo tem de ser o da alocacao, nao o do arquivo. */
+    int pl=60;
+    static Gcplx *pc=NULL;
+
+    for (i=0;i<katoms;++i)
+    { phaseshift[i].fsinexpa(akin,0);      /* forca makesinexp */
+      al[i]=phaseshift[i].getalnum(akin);
+    }
+    pc=new Gcplx [katoms*(pl+1)];
+    for (i=0;i<katoms;++i)
+      memcpy(pc+i*(pl+1),phaseshift[i].gpu_phasec(),
+        (pl+1)*sizeof(Gcplx));
+
+    k.patom=patom;             k.natoms=natoms;
+    k.devenpar=devenpar;       k.ndbleven=ndbleven;
+    k.rotmata=evenmat->gpu_rotmata();
+    k.rotmatc=evenmat->gpu_rotmatc();
+    k.rlnum=evenmat->gpu_lnum();
+    k.lamdum=evenmat->gpu_lamdum();
+    k.betanum=evenmat->gpu_betanum();
+    k.hankmat_a=(const Gcplx *)hanka->gpu_hankmat();
+    k.handata=hanka->gpu_ndata();
+    k.halnum=hanka->gpu_lnum();
+    k.hacmnum=hanka->gpu_cmnum();
+    k.hankarg_b=(const Gcplx *)hankb->gpu_hankarg();
+    k.phasec=pc;               k.pclnum=pl;
+    k.cexpix=(const Gcplx *)expix->gpu_cexpix();
+    k.exndata=expix->gpu_ndata();
+    k.exmdata=expix->gpu_mdata();
+    k.thermat=vibrate->gpu_thermat();
+    k.thernum=vibrate->gpu_thernum();
+    k.therstep=vibrate->gpu_therstep();
+    k.mweight=vibrate->gpu_mweight();
+    k.tdebye=vibrate->gpu_tdebye();
+    k.tsample=vibrate->gpu_tsample();
+    k.aweight=aweight;         /* mscdrun.cpp:76 aloca 4 */
+    k.nkind=(katoms<4)?katoms:4;
+    k.radim=radim; k.raorder=raorder;
+
+    if (mscdgpu_setup(&k))
+    { std::cerr<<"GPU setup: "<<mscdgpu_lasterror()<<"\n"; return 1; }
+    mscdgpu_set_dbg(validate);
+    mscdgpu_set_alnum(al,katoms);
+    host=new Gcplx [(long)ndbleven*radim];
+    ready=1;
+    std::cerr<<"GPU: pronta ("<<ndbleven<<" pares, radim="<<radim
+      <<", alnum="<<al[0]<<", rlnum="<<k.rlnum<<", lamdum="<<k.lamdum
+      <<", betanum="<<k.betanum<<", halnum="<<k.halnum
+      <<", handata="<<k.handata<<", cmnum="<<k.hacmnum
+      <<", nkind="<<k.nkind<<")\n";
+  }
+
+  /* hankb: alldblevent chama sempre com vkb=0, mas o cache e' keyed no
+     argumento e outras funcoes do laco o mexem. Em vez de reproduzir esse
+     automato no device, forca-se o mesmo estado e tira-se a foto. */
+  hankb->fhankelfaca(0,0,0.0f);
+  mscdgpu_set_hankb((const Gcplx *)hankb->gpu_hankarg());
+
+  if (mscdgpu_alldblevent(akin,xdetec,meanpath->finvpath(akin),host))
+  { std::cerr<<"GPU: "<<mscdgpu_lasterror()<<"\n"; return 1; }
+
+  if (!validate)
+  { memcpy(devenelem,host,(long)ndbleven*radim*sizeof(Gcplx));
+    return error;
+  }
+
+  /* Diagnostico do primeiro ponto: para os piores pares, recalcula na CPU as
+     grandezas que o kernel derivou e imprime lado a lado. beta e row sao
+     INDICES -- se divergirem, o erro nao e' de arredondamento. */
+  { static int once=0;
+    if (validate&&!once)
+    { once=1;
+      float *dbg=new float [(long)ndbleven*4];
+      if (!mscdgpu_get_dbg(dbg))
+      { const Gcplx *c=(const Gcplx *)devenelem;
+        int shown=0,j;
+        for (j=0;(j<ndbleven)&&(shown<12);++j)
+        { double worst=0.0; int e;
+          for (e=0;e<radim;++e)
+          { long ix=(long)j*radim+e;
+            double dr=(double)host[ix].re-c[ix].re;
+            double di=(double)host[ix].im-c[ix].im;
+            double da=sqrt(dr*dr+di*di);
+            double m=sqrt((double)c[ix].re*c[ix].re+(double)c[ix].im*c[ix].im);
+            if ((m>1.0e-12)&&(da/m>worst)) worst=da/m;
+          }
+          if (worst>1.0e-3)
+          { int ia=(int)devenpar[j*7+5], ib=(int)devenpar[j*7+6];
+            float ydetec[3],alpha,beta,gamma,cxa;
+            ydetec[0]=patom[ib*12]+xdetec[0];
+            ydetec[1]=patom[ib*12+1]+xdetec[1];
+            ydetec[2]=patom[ib*12+2]+xdetec[2];
+            onerotation(patom+ia*12,patom+ib*12,ydetec,&alpha,&beta,&gamma);
+            cxa=beta;
+            beta=(float)floor((beta*10.0+0.5)/10.0);
+            std::cerr<<"DBG j="<<j<<" rel="<<worst
+              <<" | CPU beta_bruto="<<cxa<<" beta="<<beta
+              <<" gamma="<<gamma
+              <<" | GPU beta="<<dbg[j*4]<<" gamma="<<dbg[j*4+1]
+              <<" row="<<dbg[j*4+3]
+              <<" | dbeta="<<(dbg[j*4]-beta)
+              <<" dgamma="<<(dbg[j*4+1]-gamma)<<"\n";
+            ++shown;
+          }
+        }
+      }
+      delete [] dbg;
+    }
+  }
+
+  { long n=(long)ndbleven*radim,idx;
+    const Gcplx *c=(const Gcplx *)devenelem;
+    for (idx=0;idx<n;++idx)
+    { double dr=(double)host[idx].re-c[idx].re;
+      double di=(double)host[idx].im-c[idx].im;
+      double da=sqrt(dr*dr+di*di);
+      double m=sqrt((double)c[idx].re*c[idx].re+(double)c[idx].im*c[idx].im);
+      ++wcount;
+      if (da>wmaxabs) wmaxabs=da;
+      if (m>1.0e-12)
+      { double rel=da/m;
+        if (rel>wmaxrel) wmaxrel=rel;
+        if (rel>1.0e-3) ++wbig;
+      }
+    }
+    std::cerr<<"GPUVAL n="<<wcount<<" maxabs="<<wmaxabs
+      <<" maxrel="<<wmaxrel<<" rel>1e-3="<<wbig<<"\n";
+  }
+  return error;
+}
+#endif
+
+#ifdef BETATEST
+extern int betatest_indbl;
+#endif
+
 int Mscdrun::alldblevent(float akin,float *xdetec)
 { int ia,ib,j,akind;
   float xa,xb,xc,xd,ka,cosbeta,vka,vkb,alpha,beta,gamma;
@@ -771,6 +934,9 @@ int Mscdrun::alldblevent(float akin,float *xdetec)
   Fcomplex cxa,cxb,cxc,cxd,cxe,cxf,cxg,cxh,cxi,cvalue;
   const float radian=(float)(3.14159265/180.0);
 
+#ifdef BETATEST
+  betatest_indbl=1;
+#endif
   if ((error==0.0)&&(msorder>0)&&(!devenelem)) error=901;
   for (j=0;(error==0)&&(j<ndbleven);++j)
   { ia=(int)devenpar[j*7+5]; ib=(int)devenpar[j*7+6];
@@ -887,6 +1053,9 @@ int Mscdrun::alldblevent(float akin,float *xdetec)
       }
     }
   }
+#ifdef BETATEST
+  betatest_indbl=0;
+#endif
   return(error);
 } //end of Mscdrun::alldblevent
 

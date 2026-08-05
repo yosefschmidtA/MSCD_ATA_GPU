@@ -72,6 +72,13 @@ class Rotamat
     int getkelem(int ma,int mb);
     int getkharm(int ma,int mb);
     float rotharma(int al,int kelem,int kharm,float beta);
+    /* Acesso as tabelas para o port de GPU. So' leitura -- o device recebe
+       copia. Ver mscdgpu.h. */
+    const float *gpu_rotmata() const { return rotmata; }
+    const float *gpu_rotmatc() const { return rotmatc; }
+    int gpu_lnum() const { return lnum; }
+    int gpu_lamdum() const { return lamdum; }
+    int gpu_betanum() const { return betanum; }
   private:
     int makerotation(float beta);
 };

@@ -17,6 +17,10 @@
 #include "userutil.h"
 #include "mscdrun.h"
 #include "mscdtimer.h"
+#ifdef MSCDGPU
+#include <stdlib.h>
+#include <string.h>
+#endif
 
 int Mscdrun::summation(float akin,float *xdetec,float *polaron,
   float *suminten,float *bakinten,Fcomplex *asum,Fcomplex *bsum,
@@ -295,7 +299,26 @@ int Mscdrun::intensity(int afitmath,float *afit,float *xdata,
       thetainside(k,akin,akout,adtheta,adphi,altheta,alphi,xdetec,
         polaron);
       MSCDT_A(0,"thetainside");
+#ifdef MSCDGPU
+      /* MSCD_GPU=1 substitui a CPU; =validate roda os dois e compara.
+         Lido uma vez -- getenv por ponto sairia caro em 779 pontos. */
+      if (k==0)
+      { static int mode=-1;
+        if (mode<0)
+        { const char *s=getenv("MSCD_GPU");
+          if (!s) mode=0;
+          else if (strcmp(s,"validate")==0) mode=2;
+          else mode=atoi(s)?1:0;
+        }
+        if (mode==1) error=gpudblevent(akin,xdetec,0);
+        else
+        { error=alldblevent(akin,xdetec);
+          if ((mode==2)&&(error==0)) error=gpudblevent(akin,xdetec,1);
+        }
+      }
+#else
       if (k==0) error=alldblevent(akin,xdetec);
+#endif
       MSCDT_A(1,"alldblevent");
       if (error==0) error=allevendetec(akin,xdetec);
       MSCDT_A(2,"allevendetec");

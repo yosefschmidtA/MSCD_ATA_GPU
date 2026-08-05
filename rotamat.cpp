@@ -295,17 +295,77 @@ float Rotamat::getmemory()
   return(xa);
 } //end of Rotamat::getmemory
 
+#ifdef BETATEST
+#include <stdio.h>
+#include <stdlib.h>
+/* Teste do "beta inteiro" (PLANO_CUDA.md, Fase 1): xa==floor(xa) faria o fator
+   de interpolacao (xa-i) ser exatamente zero, e rotmatb viraria uma copia da
+   linha xa de rotmata. Contadores separados por origem porque rotharma tem dois
+   chamadores (evenelem e scatter.cpp:196). */
+int   betatest_indbl=0;      /* 1 enquanto dentro de alldblevent */
+long  bt_entra[2]={0,0};     /* [0]=fora de alldblevent, [1]=dentro */
+long  bt_reconstroi[2]={0,0};
+long  bt_frac[2]={0,0};      /* reconstrucoes com (xa-i)!=0 exato */
+/* beta=180 satura i em 359 e da f==1.0: ainda e copia exata da linha 360,
+   nao interpolacao. Separado para nao contaminar o veredito. */
+long  bt_fracreal[2]={0,0};
+long  bt_clamp[2]={0,0};     /* i saturado em betanum-2 */
+long  bt_neg[2]={0,0};       /* beta<0, dispara a troca de sinal */
+long  bt_forarange[2]={0,0}; /* abeta>=181: nao reconstroi, rotmatb fica velho */
+float bt_maxfrac=0.0f;
+static int bt_reg=0;
+static void bt_relata(void)
+{ int s;
+  for (s=0;s<2;++s)
+    fprintf(stderr,"BETATEST %-16s entra=%ld reconstroi=%ld frac!=0=%ld "
+      "frac-real=%ld clamp=%ld neg=%ld abeta>=181=%ld\n",
+      s?"dentro-alldbl":"fora-alldbl",
+      bt_entra[s],bt_reconstroi[s],bt_frac[s],bt_fracreal[s],bt_clamp[s],
+      bt_neg[s],bt_forarange[s]);
+  fprintf(stderr,"BETATEST max|xa-i| = %.9g\n",bt_maxfrac);
+}
+#endif
+
 //beta unit: degree
 int Rotamat::makerotation(float beta)
 { int i,k,al;
   float abeta,xa;
 
   xa=(float)fabs(beta-pbeta); abeta=(float)fabs(beta);
+#ifdef BETATEST
+  { int s=betatest_indbl;
+    if (!bt_reg) { bt_reg=1; atexit(bt_relata); }
+    ++bt_entra[s];
+    if ((error==0)&&(xa>0.1)&&(abeta>=181.0)) ++bt_forarange[s];
+  }
+#endif
   if ((error==0)&&(xa>0.1)&&(abeta<181.0))
   { pbeta=beta;
     xa=(float)(abeta*(betanum-1.0)/180.0); i=(int)xa;
     if (i<0) i=0;
     else if (i>betanum-2) i=betanum-2;
+#ifdef BETATEST
+    { int s=betatest_indbl;
+      float f=xa-(float)i;
+      ++bt_reconstroi[s];
+      if (f!=0.0f)
+      { ++bt_frac[s];
+        if (!((i==betanum-2)&&(f==1.0f))) ++bt_fracreal[s];
+      }
+      if (i==betanum-2) ++bt_clamp[s];
+      if (beta<0.0) ++bt_neg[s];
+      if ((f<0.0f?-f:f)>bt_maxfrac) bt_maxfrac=(f<0.0f?-f:f);
+    }
+#endif
+    /* Aqui (xa-i) e' SEMPRE zero quando a chamada vem de alldblevent -- medido
+       em 05/08/2026, 30.726.810 de 30.726.810 -- e esta interpolacao inteira
+       e' uma copia da linha i de rotmata. Apontar rotmatb para dentro de
+       rotmata e nao copiar nada foi tentado (V6): saida identica byte a byte,
+       +1,5% em np=1 e -3,5% em np=12. Perde porque troca um rotmatb de 2 KB
+       sempre quente em L1 por linhas espalhadas dos 722 KB de rotmata, e em
+       np=12 sao doze processos brigando pelo L3. REVERTIDO -- ver OTIMIZACAO.md.
+       O achado do beta continua valendo, e e' dele que o kernel de GPU vive:
+       mscdgpu.cu indexa rotmata direto e nunca monta rotmatb. */
     for (al=0;al<lnum;++al)
     { for (k=0;k<lamdum;++k)
       { rotmatb[al*lamdum+k]=rotmata[i*lnum*lamdum+al*lamdum+k]+

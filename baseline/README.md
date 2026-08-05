@@ -145,3 +145,27 @@ do `Cov0.txt`) e um arquivo versionado. **Toda rodada sobrescreve ele** — por
 isso ele aparece modificado no `git status` depois de qualquer execução. As
 linhas que mudam entre rodadas idênticas são só as de data e duração; se mudar
 mais que isso, a física mudou.
+
+---
+
+## Arquivos da sessão de 05/08/2026 (tarde) — port de CUDA, Fase 1
+
+- **`regressao-gpu.sh`** — o teste do caminho de GPU. Critério `max|Δχ| ≤ 1e-4`
+  e `rms ≤ 1e-5` sobre a coluna `chical`, fixado na Fase 0 **antes** de existir
+  kernel. **Não substitui o `regressao.sh`**: byte a byte continua valendo, sem
+  relaxar, para qualquer mudança de CPU.
+- **`gpu-fase1.csv`** — campanha pareada e alternada V5 × GPU, `np=1`, mesma
+  janela. Mínimos: 130,58 s → 64,15 s (**2,04×**). A terceira repetição do V5
+  (145,08 s) destoa — a máquina derivou; por isso a leitura é pelo mínimo.
+- **`randmscd_gpu.fase1`** — o binário exato que produziu esses números e passou
+  o `regressao-gpu.sh`. Não recompile por cima.
+- **`v6-reprovado.csv`** — a campanha que reprovou o V6 (`beta` inteiro no
+  `makerotation`). Byte a byte idêntico, +1,5% em `np=1`, −3,5% em `np=12`.
+  Diagnóstico em `OTIMIZACAO.md`, seção V6.
+- **`betatest.txt`** — a contagem que provou o atalho do `beta`: **0 de
+  30 726 810** chamadas vindas de `alldblevent` interpolam. É a suposição de que
+  o kernel inteiro depende; para reconferir, compile com `-DBETATEST`.
+- **`campanha-gpu.sh`** — campanha pareada V5 (`np=12`) × GPU (`np=1`),
+  alternada, na mesma janela. Aborta se achar outro `mpirun`, descarta uma
+  rodada de aquecimento, imprime os mínimos e a razão. **Existe para não gastar
+  sessão vigiando medição à mão.** Uso: `./baseline/campanha-gpu.sh 3 12`.

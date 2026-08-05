@@ -58,6 +58,13 @@ class Vibration
     int loadparameter(float density,float mweight,float tdebye,
       float tsample);
     float fvibmsrd(float length,float aweight);
+    /* Port de GPU -- ver mscdgpu.h */
+    const float *gpu_thermat() const { return thermat; }
+    int gpu_thernum() const { return thernum; }
+    float gpu_therstep() const { return therstep; }
+    float gpu_mweight() const { return mweight; }
+    float gpu_tdebye() const { return tdebye; }
+    float gpu_tsample() const { return tsample; }
     int savecurve(char *filename,char *usermessage,float aweight);
   private:
     int makecurve();

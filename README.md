@@ -545,6 +545,16 @@ Quatro coisas saem daí:
 > ele é 22% do laço e quase não calcula física. Serve de aviso: **neste programa,
 > ler o código não prevê onde o tempo está.**
 
+> **Correção de 05/08/2026 (tarde).** A Fase 1 foi escrita e validada, e derrubou
+> mais uma previsão feita por leitura — desta vez do `PLANO_CUDA.md`, não deste
+> arquivo. O plano exigia **um bloco por par**, porque as funções de tabela que o
+> `evenelem` chama têm cache mutável e um kernel `thread ↦ par` faria cada thread
+> reconstruir ~2,5 KB. **Os dois caches evaporaram na inspeção**: o `rotmatb` (500
+> floats) porque `beta` é sempre inteiro ali, e o `hankarg` (100 complexos) porque
+> `fhankelfaca` é só uma interpolação de dois pontos que sai inline. O kernel que
+> passou é `thread ↦ par`, só de registrador, sem *shared memory* nenhuma.
+> **Terceira vez que a leitura do código erra neste projeto.** Ver `PLANO_CUDA.md`.
+
 **O alvo é o `alldblevent` / `evenelem`, 57% do laço.** `mscdrunc.cpp:753` varre
 os 40 562 pares distintos e para cada um chama `evenelem` (`mscdrunc.cpp:22`) até
 15 vezes; `evenelem` é a soma sobre `l`:
@@ -580,11 +590,19 @@ O que as medições impõem:
   a GPU **uma vez** e ficam. ~313 MB, ~25 ms em PCIe 4 — irrelevante contra 125 s.
 - **`Fcomplex` já é compatível.** `{float re, im}` (`fcomplex.h:31`), mesmo layout
   de `float2`/`cuFloatComplex`. Mas o `friend` com argumento padrão de
-  `fcomplex.h:46` — o mesmo que exige `-fpermissive` — vai barrar o front-end de
-  device: conte com escrever um tipo complexo próprio.
+  `fcomplex.h:46` — o mesmo que exige `-fpermissive` — barra o front-end de
+  device. **Confirmado na prática:** `mscdgpu.h` define um `Gcplx` POD e nenhum
+  cabeçalho do programa entra no `.cu`.
 - **A validação byte a byte não sobrevive.** A redução soma em outra ordem e em
-  `float` isso mexe no último bit. O critério terá de virar tolerância relativa,
-  **decidida antes de escrever kernel**. Ver `baseline/README.md`.
+  `float` isso mexe no último bit. **Feito:** o critério está em
+  `baseline/regressao-gpu.sh` (`max|Δχ| ≤ 1e-4`), e a Fase 1 mediu
+  `max|Δχ| = 1,0×10⁻⁵` — o piso de ruído do próprio programa.
+- **O que mais dói não é a precisão, é o índice.** Este programa tira **inteiros
+  de contas em float** em três lugares: a linha de `rotmata` (`beta`), o `k` de
+  `fexpix` e o `i` de `fhankelfaca`. Perto da fronteira, 1 ulp troca a entrada da
+  tabela e o valor muda de ordem de grandeza, não de último bit. Foi o que fez o
+  `nvcc` precisar de `-fmad=false` e obrigou a copiar literalmente a ordem das
+  promoções float→double do código de 1998. Ver `PLANO_CUDA.md`, "Armadilhas".
 - **Amdahl.** Preparo serial ~11,4 s de 132,45 s (`np=1`) ⇒ **teto de 11,6×** se
   só o laço for para a GPU. Para passar disso é preciso levar também o `pathcut`
   (7,9 s dos 11,4 s).
