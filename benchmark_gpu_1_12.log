@@ -1,0 +1,91 @@
+Aguardando 30 segundos para esfriar (np=1)...
+=== Testando np=1 ===
+--- tempo (np=1, GPU) ---
+WALL 35.65 s  MAXRSS 415024 kB
+--- chi (779 pontos) ---
+  max|dchi| = 1.000e-05   (criterio 1e-4)
+  rms|dchi| = 6.432e-07   (criterio 1e-5)
+  pontos acima de 1e-4: 0
+APROVADO
+--- factors (sanidade, NAO e' criterio) ---
+  agora: job   1 of   1 completed, factors =    0.6710   0.8642
+  base:  job   1 of   1 completed, factors =    0.6710   0.8642
+
+Aguardando 30 segundos para esfriar (np=2)...
+=== Testando np=2 ===
+--- tempo (np=2, GPU) ---
+WALL 26.28 s  MAXRSS 581748 kB
+--- chi (779 pontos) ---
+  max|dchi| = 1.000e-05   (criterio 1e-4)
+  rms|dchi| = 6.432e-07   (criterio 1e-5)
+  pontos acima de 1e-4: 0
+APROVADO
+--- factors (sanidade, NAO e' criterio) ---
+  agora: job   1 of   1 completed, factors =    0.6710   0.8642
+  base:  job   1 of   1 completed, factors =    0.6710   0.8642
+
+Aguardando 30 segundos para esfriar (np=4)...
+=== Testando np=4 ===
+--- tempo (np=4, GPU) ---
+WALL 24.43 s  MAXRSS 581680 kB
+--- chi (779 pontos) ---
+  max|dchi| = 1.000e-05   (criterio 1e-4)
+  rms|dchi| = 6.432e-07   (criterio 1e-5)
+  pontos acima de 1e-4: 0
+APROVADO
+--- factors (sanidade, NAO e' criterio) ---
+  agora: job   1 of   1 completed, factors =    0.6710   0.8642
+  base:  job   1 of   1 completed, factors =    0.6710   0.8642
+
+Aguardando 30 segundos para esfriar (np=6)...
+=== Testando np=6 ===
+--- tempo (np=6, GPU) ---
+WALL 26.71 s  MAXRSS 582044 kB
+--- chi (779 pontos) ---
+  max|dchi| = 1.000e-05   (criterio 1e-4)
+  rms|dchi| = 6.432e-07   (criterio 1e-5)
+  pontos acima de 1e-4: 0
+APROVADO
+--- factors (sanidade, NAO e' criterio) ---
+  agora: job   1 of   1 completed, factors =    0.6710   0.8642
+  base:  job   1 of   1 completed, factors =    0.6710   0.8642
+
+Aguardando 30 segundos para esfriar (np=8)...
+=== Testando np=8 ===
+--- tempo (np=8, GPU) ---
+WALL 25.08 s  MAXRSS 582100 kB
+--- chi (779 pontos) ---
+  max|dchi| = 1.000e-05   (criterio 1e-4)
+  rms|dchi| = 6.432e-07   (criterio 1e-5)
+  pontos acima de 1e-4: 0
+APROVADO
+--- factors (sanidade, NAO e' criterio) ---
+  agora: job   1 of   1 completed, factors =    0.6710   0.8642
+  base:  job   1 of   1 completed, factors =    0.6710   0.8642
+
+Aguardando 30 segundos para esfriar (np=10)...
+=== Testando np=10 ===
+--- tempo (np=10, GPU) ---
+WALL 30.87 s  MAXRSS 581984 kB
+--- chi (779 pontos) ---
+  max|dchi| = 1.000e-05   (criterio 1e-4)
+  rms|dchi| = 6.432e-07   (criterio 1e-5)
+  pontos acima de 1e-4: 0
+APROVADO
+--- factors (sanidade, NAO e' criterio) ---
+  agora: job   1 of   1 completed, factors =    0.6710   0.8642
+  base:  job   1 of   1 completed, factors =    0.6710   0.8642
+
+Aguardando 30 segundos para esfriar (np=12)...
+=== Testando np=12 ===
+--- tempo (np=12, GPU) ---
+WALL 37.79 s  MAXRSS 582044 kB
+--- chi (779 pontos) ---
+  max|dchi| = 1.000e-05   (criterio 1e-4)
+  rms|dchi| = 6.432e-07   (criterio 1e-5)
+  pontos acima de 1e-4: 0
+APROVADO
+--- factors (sanidade, NAO e' criterio) ---
+  agora: job   1 of   1 completed, factors =    0.6710   0.8642
+  base:  job   1 of   1 completed, factors =    0.6710   0.8642
+

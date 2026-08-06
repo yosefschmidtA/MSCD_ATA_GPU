@@ -22,6 +22,7 @@ typedef struct { float re,im; } Gcplx;
 typedef struct
 { const float *patom;      int natoms;   /* natoms*12 */
   const float *devenpar;   int ndbleven; /* ndbleven*7 */
+  const int *devenadd;     int msorder;
   const float *rotmata;    const float *rotmatc;
   int rlnum,lamdum,betanum;
   const Gcplx *hankmat_a;  int handata,halnum,hacmnum;
@@ -44,8 +45,16 @@ int mscdgpu_setup(const Gconst *k);
 
 /* Um ponto: calcula devenelem[ndbleven*radim] para este xdetec.
    xc = meanpath->finvpath(akin), constante, calculado no host. */
-int mscdgpu_alldblevent(float akin,const float *xdetec,float xc,
-  Gcplx *devenelem_out);
+int mscdgpu_alldblevent(float akin,const float *xdetec,float xc);
+int mscdgpu_get_devenelem(Gcplx *out);
+int mscdgpu_allevendetec(float akin,const float *xdetec,float xc,Gcplx *devendetec_out);
+
+int mscdgpu_setup_summation(
+    const int *tevencut, const int *tevendim, const int *tevenadd, 
+    const float *tevenpar, const float *talpha, const float *tgamma,
+    int ntrieven, int ntrielem, const float *patom, int msorder);
+
+int mscdgpu_summation(float akin, const Gcplx *tevenelem, Gcplx *asum_host, const float *patom);
 
 void mscdgpu_teardown(void);
 const char *mscdgpu_lasterror(void);

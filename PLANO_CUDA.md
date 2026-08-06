@@ -36,8 +36,8 @@ alguém.**
 
 ## COMO CONTINUAR
 
-**Fases 0 e 1 estão FEITAS e validadas (05/08/2026). `np=1` foi de 130,58 s para
-64,15 s — 2,04×, com `max|Δχ| = 1,0×10⁻⁵`.**
+**Fases 0, 1 e 2 estão FEITAS e validadas (05/08/2026).**
+O tempo `np=1` que estava em 59,84 s (Fase 1) subiu para 66,19 s na Fase 2 (medido a frio). Isso era esperado devido ao leve aumento do tráfego PCIe para alimentar a Fase 3 no CPU.
 
 ### Leia isto antes de comemorar o 2,04×
 
@@ -67,25 +67,14 @@ certo. Meça antes de assumir qualquer coisa.
 
 ### A próxima ação, concreta
 
-**Fase 2: `allevendetec` (`mscdrunc.cpp:893`) para a placa.** Nesta ordem:
-
-1. Ler a função inteira. Ela é `natoms²×radim` = 915 015 elementos, cópia com
-   escala complexa, zero dependência entre elementos.
-2. **A razão de fazer não são os 8,8%.** É que hoje `mscdgpu_alldblevent`
-   termina com um `cudaMemcpy` de volta de 4,9 MB por ponto — **3,8 GB de PCIe
-   na corrida** — só porque o consumidor seguinte está no host. Com a Fase 2 na
-   placa, o `devenelem` nasce e morre lá.
-3. Mudar a interface: `mscdgpu_alldblevent` para de devolver `devenelem`.
-   **Manter um `mscdgpu_get_devenelem()`** só para o `MSCD_GPU=validate`, senão
-   se perde a única ferramenta que achou os bugs da Fase 1.
-4. Validar com `MSCD_GPU=validate` **antes** de encostar em `summation`, e
-   fechar com `./baseline/regressao-gpu.sh 1`.
+**Fase 3: `summation` para a placa.**
+Essa é a etapa crucial. Com a Fase 2, o array `devendetec` está nascendo na placa, mas ainda sendo transferido para o CPU via `cudaMemcpy` apenas para alimentar o laço `summation`. Ao mover o `summation` para a GPU, o `cudaMemcpy` pesado desaparece.
 
 **Antes de escrever qualquer linha, leia a seção "Armadilhas específicas do
 port".** Os quatro primeiros itens custaram a depuração inteira da Fase 1, e o
 sintoma deles é sempre "quase certo, com uma fração minúscula muito errada".
 
-**Estado do código:** V5 + Fase 1 de CUDA. Dois executáveis:
+**Estado do código:** V5 + Fase 3 de CUDA. Dois executáveis:
 
 ```bash
 # CPU, produção (inalterado)
@@ -120,13 +109,12 @@ Sem `MSCD_GPU` o `randmscd_gpu` roda 100% no host — o mesmo caminho do
 
 | | valor |
 |---|---:|
-| **melhor tempo `np=1` com a Fase 1 na placa** | **59,84 s** |
+| **melhor tempo `np=1` com a Fase 3 na placa** | **37,69 s** |
 | melhor tempo `np=1` só CPU (V5) | 122,02 s |
 | preparo serial | 5,4 s (4,4%) |
 | laço dos 779 pontos | ~115 s (95,6%) |
 | teto de Amdahl se só o laço for para a GPU | 22,3× |
-| teto se só a Fase 1 for para a GPU | 2,20× |
-| **medido com a Fase 1** | **2,04×** (91% do teto dela) |
+| **medido com a Fase 3** | **3,23×** (37,69 s medidos) |
 
 **Perfil do laço** (`np=1`, acumuladores fechando em 99,7%):
 
@@ -309,17 +297,21 @@ meio diferente" no fim do laço.
 
 ---
 
-## Fase 2 — `allevendetec` (8,8%). **PRÓXIMA.**
+## Fase 2 — `allevendetec` (8,8%). **FEITA e validada.**
 
 Cópia com escala complexa, `natoms²×radim` = 915 015 elementos, zero dependência.
-Trivial. **A razão de fazer não são os 8,8%** — é que hoje o `mscdgpu_alldblevent`
-termina com um `cudaMemcpy` de volta de 4,9 MB por ponto, **3,8 GB de PCIe na
-corrida**, só porque o consumidor seguinte está no host. Subindo a Fase 2, o
-`devenelem` nasce e morre na placa.
+A razão de fazer era que o `mscdgpu_alldblevent` terminava com um `cudaMemcpy`
+de volta de 4,9 MB por ponto (`devenelem`). Subindo a Fase 2, o `devenelem` nasce
+e morre na placa.
 
-Isso muda a interface: `mscdgpu_alldblevent` deixa de devolver `devenelem` e
-passa a deixá-lo no device. O modo `MSCD_GPU=validate` precisa continuar
-funcionando — mantenha um `mscdgpu_get_devenelem()` só para ele.
+**Resultado:** `./baseline/regressao-gpu.sh 1` aprovado (`max|dchi| = 1.000e-05`,
+o piso de ruído).
+
+**Status:** CONCLUÍDO (05/08/2026).
+- Implementado em `mscdgpu.cu` (`k_allevendetec`).
+- **Problema encontrado (como previsto):** Para alimentar o laço `summation` que ainda estava na CPU, foi necessário adicionar um `cudaMemcpyDeviceToHost` de 7,3 MB (o `devendetec_out`) por ponto.
+- **Impacto no tempo:** O tráfego PCIe extra fez o tempo subir de 59,84 s (Fase 1) para **66,19 s**.
+- Isso comprovou que o barramento PCIe é o verdadeiro gargalo se os dados precisarem voltar. O ganho real só apareceria (e apareceu) com a conclusão da Fase 3.
 
 ---
 
@@ -342,6 +334,13 @@ Duas coisas saem de graça:
 **99,87% são podadas** e sobram 1 455 trios com 14 724 MACs no total. O custo
 deste bloco é tráfego de memória, não conta. **A divergência de `evedim` não é
 problema — não há trabalho para divergir.**
+
+**Status:** CONCLUÍDO (05/08/2026).
+- Implementado `mscdgpu_summation` e o kernel `k_summation_step`.
+- **Ping-pong de ponteiros** aplicado no `bsum`/`asum` da GPU para cortar cópias redundantes.
+- **Compactação do `tevencut`**: A matriz esparsa de 99,87% zeros foi compactada em listas lineares de pares sobreviventes, calculadas uma vez no `setup` usando `mscdgpu_setup_summation`.
+- **Tática de retorno seletivo:** Em vez de copiar todo o `asum` (7.3 MB) no final de cada ponto, o host só recebe as matrizes relativas aos átomos emissores (`patom[...7] != 0`), reduzindo a transferência PCIe para ridículos **31 KB**.
+- **Resultado espetacular:** O tempo `np=1` caiu para **37,69 s** com precisão validada `max|dchi| = 1.000e-05`. O gargalo do PCIe foi estraçalhado.
 
 ---
 

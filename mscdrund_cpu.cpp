@@ -20,7 +20,6 @@
 #ifdef MSCDGPU
 #include <stdlib.h>
 #include <string.h>
-#include "mscdgpu.h"
 #endif
 
 int Mscdrun::summation(float akin,float *xdetec,float *polaron,
@@ -98,13 +97,6 @@ int Mscdrun::summation(float akin,float *xdetec,float *polaron,
 
 
   ali=linitial;
-#ifdef MSCDGPU
-  if (getenv("MSCD_GPU")) {
-    MSCDT_AMARK;
-    error = mscdgpu_summation(akin, (const Gcplx*)tevenelem, (Gcplx*)asum, patom);
-    MSCDT_A(4,"summation: laco de m (gpu)");
-  } else {
-#endif
   MSCDT_AMARK;
   for (ib=0;(error==0)&&(ib<natoms);++ib)
   { for (ic=0;ic<natoms;++ic)
@@ -191,9 +183,6 @@ int Mscdrun::summation(float akin,float *xdetec,float *polaron,
     }
   }
   MSCDT_A(4,"summation: laco de m (serie)");
-#ifdef MSCDGPU
-  }
-#endif
 
   for (ia=0;ia<natoms;++ia)
   { emiter=patom[ia*12+7];
@@ -313,36 +302,26 @@ int Mscdrun::intensity(int afitmath,float *afit,float *xdata,
 #ifdef MSCDGPU
       /* MSCD_GPU=1 substitui a CPU; =validate roda os dois e compara.
          Lido uma vez -- getenv por ponto sairia caro em 779 pontos. */
-      static int mode=-1;
-      if (mode<0)
-      { const char *s=getenv("MSCD_GPU");
-        if (!s) mode=0;
-        else if (strcmp(s,"validate")==0) mode=2;
-        else mode=atoi(s)?1:0;
-      }
       if (k==0)
-      { 
+      { static int mode=-1;
+        if (mode<0)
+        { const char *s=getenv("MSCD_GPU");
+          if (!s) mode=0;
+          else if (strcmp(s,"validate")==0) mode=2;
+          else mode=atoi(s)?1:0;
+        }
         if (mode==1) error=gpudblevent(akin,xdetec,0);
         else
         { error=alldblevent(akin,xdetec);
           if ((mode==2)&&(error==0)) error=gpudblevent(akin,xdetec,1);
         }
       }
-      MSCDT_A(1,"alldblevent");
-
-      if (mode==1) {
-        if (error==0) error=gpuevendetec(akin,xdetec,0);
-      } else {
-        if (error==0) error=allevendetec(akin,xdetec);
-        if ((mode==2)&&(error==0)) error=gpuevendetec(akin,xdetec,1);
-      }
-      MSCDT_A(2,"allevendetec");
 #else
       if (k==0) error=alldblevent(akin,xdetec);
+#endif
       MSCDT_A(1,"alldblevent");
       if (error==0) error=allevendetec(akin,xdetec);
       MSCDT_A(2,"allevendetec");
-#endif
       if (error==0) error=summation(akin,xdetec,polaron,
         &suminten,&bakinten,asum,bsum,csum);
       if ((k==0)&&(accepang>=1.0e-3))

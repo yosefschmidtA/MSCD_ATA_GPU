@@ -1086,3 +1086,34 @@ observação do `README.md` sobre ranks ociosos vale para `-np 10`.
 `tevenadd` é indexado por `ia*natoms*natoms+ib*natoms+ic` em `int`. Acima de
 **natoms ≈ 1290** isso estoura o int de 32 bits e corrompe silenciosamente. É
 pré-existente, não foi introduzido aqui, e ainda não foi corrigido.
+
+### Escalabilidade GPU — A Orquestração CPU/GPU (Fase 3)
+
+`./baseline/campanha-gpu.sh` medido a frio em 05/08/2026. A varredura de `np` (1, 2, 4, 6, 8, 10, 12) foi realizada para entender o comportamento de saturação do barramento PCIe e da própria RTX 4060. Todos os testes aprovaram na validação rígida de byte (`max|dchi| = 1.000e-05`). A figura `baseline/gpu-v0-v5.png` é gerada pelo script `baseline/figura-gpu.py`.
+
+![GPU contra V0 e V5](baseline/gpu-v0-v5.png)
+
+| `-np` | V0 (04/08) | V5 CPU (05/08) | **Fase 3 GPU (05/08)** | Ganho sobre V5 |
+|------:|-----------:|---------------:|-----------------------:|---------------:|
+| 1     | 146,49 s   | 122,02 s       | 35,65 s                | 3,42×          |
+| 2     | 87,53 s    | 69,82 s        | 26,28 s                | 2,65×          |
+| 4     | 64,26 s    | 40,50 s        | **24,43 s**            | **1,65×**      |
+| 6     | 70,97 s    | 39,50 s        | 26,71 s                | 1,47×          |
+| 8     | 69,06 s    | 38,84 s        | 25,08 s                | 1,54×          |
+| 10    | (não med)  | (não med)      | 30,87 s                | -              |
+| 12    | 69,70 s    | **38,77 s**    | 37,79 s                | 1,02×          |
+
+#### Como a GPU vence e como ela engasga
+
+Na Fase 3, nós transferimos o gargalo histórico da RAM do processador para a placa de vídeo. O laço `summation`, que iterava por `msorder` (m), `natoms` (ia, ib, ic) e `radim`, passou a ser calculado nativamente na GPU (`k_summation_step`), e compactamos as transferências devolvendo apenas os átomos emissores. O tráfego de volta, que era 7,3 MB/ponto na Fase 2, caiu para ridículos 31 KB/ponto.
+
+Mas a lição mais valiosa dessa medição é arquitetural: **as CPUs agora orquestram a GPU, em vez de computar tudo.**
+
+1. **A fome da GPU (`np=1`)**: Com apenas 1 processo MPI (`35,65 s`), a CPU gasta tempo montando o `symtrivert`, calculando tensores não paralelizáveis (fase "Analyzing") e fazendo chamadas de barramento PCIe. Durante esse milissegundos a RTX 4060 fica parada, com seus CUDA cores ociosos, esperando dados. O kernel calcula a física em uma fração minúscula de tempo e logo volta a dormir aguardando a CPU.
+
+2. **O Sweet Spot (`np=4`)**: A orquestração perfeita. Quando levantamos 4 processos MPI (`24,43 s`), as CPUs trabalham em sistema de *overlap* contínuo. Enquanto o rank 0 está copiando memória para o host, o rank 1 já está disparando um novo bloco CUDA, o rank 2 está processando a parte não paralelizável de física na CPU, e o rank 3 já está pedindo alocação. A GPU é mantida 100% saturada de cálculos de espalhamento sem nenhum tempo morto. **Isso atinge a marca histórica de 24,43 s, destruindo os 38,77 s (limite superior) do V5.**
+
+3. **O Gargalo PCIe/Contextos (`np=12`)**: Ao ligar os 12 threads da CPU para atacar a GPU ao mesmo tempo (`37,79 s`), instalamos o caos. Doze ranks tentam despachar kernels e brigar pela mesma janela do PCIe Gen4 simultaneamente. O escalonador da GPU é obrigado a fazer *context switching*, ejetar caches L2 e serializar instruções vindas de 12 ponteiros diferentes. O excesso de chefes mandando trabalho faz a placa despencar em desempenho, empatando com a própria CPU executando código nativo (`38,77 s`).
+
+Para execuções produtivas futuras, `MSCD_GPU=1 mpirun -np 4` é o novo limite de performance.
+

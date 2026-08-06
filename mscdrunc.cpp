@@ -806,6 +806,7 @@ int Mscdrun::gpudblevent(float akin,float *xdetec,int validate)
 
     k.patom=patom;             k.natoms=natoms;
     k.devenpar=devenpar;       k.ndbleven=ndbleven;
+    k.devenadd=devenadd;       k.msorder=msorder;
     k.rotmata=evenmat->gpu_rotmata();
     k.rotmatc=evenmat->gpu_rotmatc();
     k.rlnum=evenmat->gpu_lnum();
@@ -832,6 +833,10 @@ int Mscdrun::gpudblevent(float akin,float *xdetec,int validate)
 
     if (mscdgpu_setup(&k))
     { std::cerr<<"GPU setup: "<<mscdgpu_lasterror()<<"\n"; return 1; }
+    if (msorder > 1) {
+      if (mscdgpu_setup_summation(tevencut, tevendim, tevenadd, tevenpar, talpha, tgamma, ntrieven, ntrielem, patom, msorder))
+      { std::cerr<<"GPU setup summation: "<<mscdgpu_lasterror()<<"\n"; return 1; }
+    }
     mscdgpu_set_dbg(validate);
     mscdgpu_set_alnum(al,katoms);
     host=new Gcplx [(long)ndbleven*radim];
@@ -849,13 +854,14 @@ int Mscdrun::gpudblevent(float akin,float *xdetec,int validate)
   hankb->fhankelfaca(0,0,0.0f);
   mscdgpu_set_hankb((const Gcplx *)hankb->gpu_hankarg());
 
-  if (mscdgpu_alldblevent(akin,xdetec,meanpath->finvpath(akin),host))
+  if (mscdgpu_alldblevent(akin,xdetec,meanpath->finvpath(akin)))
   { std::cerr<<"GPU: "<<mscdgpu_lasterror()<<"\n"; return 1; }
 
   if (!validate)
-  { memcpy(devenelem,host,(long)ndbleven*radim*sizeof(Gcplx));
-    return error;
+  { return error;
   }
+  
+  if (mscdgpu_get_devenelem(host)) return 901;
 
   /* Diagnostico do primeiro ponto: para os piores pares, recalcula na CPU as
      grandezas que o kernel derivou e imprime lado a lado. beta e row sao
@@ -920,6 +926,39 @@ int Mscdrun::gpudblevent(float akin,float *xdetec,int validate)
       <<" maxrel="<<wmaxrel<<" rel>1e-3="<<wbig<<"\n";
   }
   return error;
+}
+
+int Mscdrun::gpuevendetec(float akin,float *xdetec,int validate)
+{
+  float xc=meanpath->finvpath(akin);
+  if (!validate) {
+    if (mscdgpu_allevendetec(akin,xdetec,xc,(Gcplx*)devendetec)) return 901;
+    return 0;
+  }
+  
+  static Gcplx *host=NULL;
+  if (!host) host=new Gcplx [(long)natoms*natoms*radim];
+  if (mscdgpu_allevendetec(akin,xdetec,xc,host)) return 901;
+
+  double wmaxabs=0.0;
+  long wcount=0;
+  for (int ia=0; ia<natoms; ++ia) {
+    if (msorder==1 && patom[ia*12+7]==0.0f) continue;
+    for (int ib=0; ib<natoms; ++ib) {
+      if (ia==ib) continue;
+      for (int j=0; j<radim; ++j) {
+         long idx = (long)ia*natoms*radim + (long)ib*radim + j;
+         double d = sqrt(pow(host[idx].re - real(((Fcomplex*)devendetec)[idx]), 2) + 
+                         pow(host[idx].im - imag(((Fcomplex*)devendetec)[idx]), 2));
+         if (d > wmaxabs) wmaxabs = d;
+         if (d > 1.0e-5) wcount++;
+      }
+    }
+  }
+  if (wcount>0) {
+    fprintf(stderr, "gpuevendetec diff: maxabs=%g errs=%ld\n", wmaxabs, wcount);
+  }
+  return 0;
 }
 #endif
 

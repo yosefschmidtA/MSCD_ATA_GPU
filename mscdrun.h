@@ -143,6 +143,7 @@ class Mscdrun
     int alldblevent(float akin,float *xdetec);
     /* Fase 1 do port de GPU. So' existe com -DMSCDGPU. Ver mscdgpu.h. */
     int gpudblevent(float akin,float *xdetec,int validate);
+    int gpuevendetec(float akin,float *xdetec,int validate);
     int allevendetec(float akin,float *xdetec);
     int onevenemit(int ia,int ib,int alf,int am,float akin,
       float *xdetec,float *polaron,Fcomplex *aemitelem);

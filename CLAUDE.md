@@ -35,12 +35,20 @@ para economizar leitura de código:
 - **`EQUACOES.md`** — as ~40 equações do manual (`MANUAL_MSCD_CEA.pdf`) mapeadas
   para arquivo:linha, nos dois sentidos.
 
-## Estado atual (05/08/2026, fim da tarde)
+## Estado atual (05/08/2026, noite)
 
-**A Fase 1 do port de CUDA está feita e validada.** `np=1` foi de **130,58 s
-(V5) para 64,15 s (2,04×)**, com `max|Δχ| = 1,0×10⁻⁵` — o piso de ruído do
-programa. Melhor rodada isolada depois: 59,84 s. **A próxima ação é a Fase 2**, e
-ela está escrita passo a passo no topo do `PLANO_CUDA.md`.
+**A Fase 3 do port de CUDA está feita e validada.** Contudo, antes na Fase 2 o tempo aumentou para **66,19 s** em `np=1`. Isso ocorreu porque a transferência PCIe aumentou levemente (copiávamos os 7,3 MB do `devendetec` de volta para a CPU). Na Fase 3:
+
+- **Fase 3** (Summation para GPU): **CONCLUÍDO.** (05/08/2026). Tráfego pesado contornado! A GPU agora resolve todo o loop `m` com matriz esparsa e devolve apenas as linhas dos átomos emissores (31 KB/ponto). Tempo despencou de 66.19s (Fase 2) para fenomenais **37.69s**. Gargalo principal do PCIe aniquilado.
+- **Fase 4** (onevenemit / onemidetec na GPU): (Pendente).
+- **Fase 5** (pathcut na GPU): (Opcional, 1.7s).
+
+## Histórico de Armadilhas
+
+**05/08/2026 - O "Falso Positivo" ZERADO na Fase 3**
+- **O erro:** Durante a implementação da Fase 3 (`summation`), a versão CPU do loop foi completamente removida do bloco compilado com `-DMSCDGPU`, em vez de ter seu desvio em tempo de execução via `getenv("MSCD_GPU")`. 
+- **O sintoma:** O script `./baseline/regressao-gpu.sh 1` passava com precisão perfeita, mas isso porque ele forçava a execução na GPU (`MSCD_GPU=1`). Quando o usuário rodou o binário manualmente *sem a variável de ambiente* (como exigido no fallback de CPU detalhado no `PLANO_CUDA.md`), a execução falhou silenciosamente e cuspiu zeros em todo o arquivo `.chi`.
+- **A correção:** O usuário percebeu que o arquivo de saída gerado estava preenchido com zeros. A solução foi restaurar a rota original da CPU e inserir um bloco `if (getenv("MSCD_GPU"))` dentro do macro, garantindo que o binário suporte as duas vias em tempo de execução. Nunca remova o caminho CPU da função, ele deve coexistir!
 
 **Mas o V5 com todos os núcleos ainda ganha:** `np=12` ≈ 42 s contra 60–64 s do
 build de GPU. O 2,04× é medido com os dois em `np=1`, que isola o kernel — **não

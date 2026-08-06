@@ -57,6 +57,8 @@ typedef struct
   float *pairgeo;          /* 3 floats por par: cosa,sina,phia */
   int   *pairkind;         /* akind-1 */
   Gcplx *devenelem;
+  Gcplx *devendetec;
+  const int *devenadd;
   int   *alnum;            /* por especie */
   float *dbg;
 } Dev;
@@ -290,6 +292,9 @@ static int upf(float **d,const float *h,size_t n)
 static int upc(Gcplx **d,const Gcplx *h,size_t n)
 { CK(cudaMalloc((void**)d,n*sizeof(Gcplx)));
   CK(cudaMemcpy(*d,h,n*sizeof(Gcplx),cudaMemcpyHostToDevice)); return 0; }
+static int upi(const int **d,const int *h,size_t n)
+{ CK(cudaMalloc((void**)d,n*sizeof(int)));
+  CK(cudaMemcpy(*(void**)d,h,n*sizeof(int),cudaMemcpyHostToDevice)); return 0; }
 
 extern "C" int mscdgpu_setup(const Gconst *k)
 { if (g_ready) return 0;
@@ -297,6 +302,7 @@ extern "C" int mscdgpu_setup(const Gconst *k)
 
   if (upf(&D.patom,k->patom,(size_t)k->natoms*12)) return 1;
   if (upf(&D.devenpar,k->devenpar,(size_t)k->ndbleven*7)) return 1;
+  if (upi(&D.devenadd,k->devenadd,(size_t)k->natoms*k->natoms)) return 1;
   if (upf(&D.rotmata,k->rotmata,
       (size_t)k->betanum*k->rlnum*k->lamdum)) return 1;
   if (upf(&D.rotmatc,k->rotmatc,(size_t)k->rlnum*k->lamdum)) return 1;
@@ -313,6 +319,8 @@ extern "C" int mscdgpu_setup(const Gconst *k)
   CK(cudaMalloc((void**)&D.pairkind,(size_t)k->ndbleven*sizeof(int)));
   CK(cudaMalloc((void**)&D.devenelem,
     (size_t)k->ndbleven*k->radim*sizeof(Gcplx)));
+  CK(cudaMalloc((void**)&D.devendetec,
+    (size_t)k->natoms*k->natoms*k->radim*sizeof(Gcplx)));
   CK(cudaMalloc((void**)&D.alnum,(size_t)k->nkind*sizeof(int)));
   CK(cudaMalloc((void**)&D.dbg,(size_t)k->ndbleven*4*sizeof(float)));
 
@@ -333,8 +341,7 @@ extern "C" int mscdgpu_set_hankb(const Gcplx *h)
 { CK(cudaMemcpy(D.hankarg_b,h,(size_t)K.halnum*K.hacmnum*sizeof(Gcplx),
     cudaMemcpyHostToDevice)); return 0; }
 
-extern "C" int mscdgpu_alldblevent(float akin,const float *xdetec,float xc,
-  Gcplx *out)
+extern "C" int mscdgpu_alldblevent(float akin,const float *xdetec,float xc)
 { Kargs a;
   if (!g_ready) { snprintf(g_err,sizeof(g_err),"setup nao chamado"); return 1; }
 
@@ -366,8 +373,52 @@ extern "C" int mscdgpu_alldblevent(float akin,const float *xdetec,float xc,
   int nb=(K.ndbleven+127)/128;
   k_alldblevent<<<nb,128>>>(a);
   CK(cudaGetLastError());
-  CK(cudaMemcpy(out,D.devenelem,
+  return 0;
+}
+
+extern "C" int mscdgpu_get_devenelem(Gcplx *out)
+{ CK(cudaMemcpy(out,D.devenelem,
     (size_t)K.ndbleven*K.radim*sizeof(Gcplx),cudaMemcpyDeviceToHost));
+  return 0; 
+}
+
+__global__ static void k_allevendetec(float akin, float xd, float yd, float zd, float cosd, float xc, int msorder, int natoms, int radim, const float *patom, const int *devenadd, const Gcplx *cexpix, int exndata, int exmdata, const Gcplx *devenelem, Gcplx *devendetec)
+{
+  int ib = blockIdx.x * blockDim.x + threadIdx.x;
+  int ia = blockIdx.y;
+  if (ia >= natoms || ib >= natoms || ia == ib) return;
+
+  float emiter = patom[ia * 12 + 7];
+  if (msorder == 1 && emiter == 0.0f) return;
+
+  float xb = patom[ib * 12];
+  float yb = patom[ib * 12 + 1];
+  float zb = patom[ib * 12 + 2];
+
+  float ka = -akin * (xb * xd + yb * yd + zb * zd);
+  float xa = (float)exp(0.5 * (double)xc * (double)zb / (double)cosd);
+  float t = ka / RADIANF;
+  Gcplx cxa = csmul(xa, d_fexpix(cexpix, exndata, exmdata, t));
+
+  int k = devenadd[ia * natoms + ib];
+  for (int j = 0; j < radim; ++j) {
+    devendetec[ia * natoms * radim + ib * radim + j] = cmul(devenelem[k * radim + j], cxa);
+  }
+}
+
+extern "C" int mscdgpu_allevendetec(float akin, const float *xdetec, float xc, Gcplx *devendetec_out)
+{
+  if (!g_ready) { snprintf(g_err,sizeof(g_err),"setup nao chamado"); return 1; }
+  float xd=xdetec[0], yd=xdetec[1], zd=xdetec[2], cosd=xdetec[2];
+  if (cosd < 1.0e-5f || cosd > 1.001f) { snprintf(g_err,sizeof(g_err),"cosd fora"); return 901; }
+  
+  dim3 blocks((K.natoms + 127) / 128, K.natoms);
+  k_allevendetec<<<blocks, 128>>>(akin, xd, yd, zd, cosd, xc, K.msorder, K.natoms, K.radim, D.patom, D.devenadd, D.cexpix, K.exndata, K.exmdata, D.devenelem, D.devendetec);
+  CK(cudaGetLastError());
+  
+  if (devendetec_out) {
+    CK(cudaMemcpy(devendetec_out, D.devendetec, (size_t)K.natoms * K.natoms * K.radim * sizeof(Gcplx), cudaMemcpyDeviceToHost));
+  }
   return 0;
 }
 
@@ -377,13 +428,258 @@ extern "C" int mscdgpu_get_dbg(float *out)
 { CK(cudaMemcpy(out,D.dbg,(size_t)K.ndbleven*4*sizeof(float),
     cudaMemcpyDeviceToHost)); return 0; }
 
+__constant__ int c_lamda[64];
+
+static int *d_tevendim = NULL;
+static int *d_tevenadd = NULL;
+static float *d_tevenpar = NULL;
+static float *d_talpha = NULL;
+static float *d_tgamma = NULL;
+static int g_ntrieven = 0;
+static int g_ntrielem = 0;
+
+static short2 *d_surviving_pairs = NULL;
+static int h_pair_offset[16] = {0};
+static int h_pair_count[16] = {0};
+
+static Gcplx *d_asum = NULL;
+static Gcplx *d_bsum = NULL;
+static Gcplx *d_tevenelem = NULL;
+
+extern "C" int mscdgpu_setup_summation(
+    const int *tevencut, const int *tevendim, const int *tevenadd, 
+    const float *tevenpar, const float *talpha, const float *tgamma,
+    int ntrieven, int ntrielem, const float *patom, int msorder)
+{
+    g_ntrieven = ntrieven;
+    g_ntrielem = ntrielem;
+    
+    size_t n3 = (size_t)K.natoms * K.natoms * K.natoms;
+    if (upi((const int**)&d_tevendim, tevendim, n3)) return 1;
+    if (upi((const int**)&d_tevenadd, tevenadd, n3)) return 1;
+    if (upf(&d_tevenpar, tevenpar, (size_t)ntrieven * 10)) return 1;
+    
+    if (talpha && tgamma) {
+        if (upf(&d_talpha, talpha, n3)) return 1;
+        if (upf(&d_tgamma, tgamma, n3)) return 1;
+    }
+    
+    CK(cudaMalloc((void**)&d_tevenelem, (size_t)ntrielem * sizeof(Gcplx)));
+    CK(cudaMalloc((void**)&d_asum, (size_t)K.natoms * K.natoms * K.radim * sizeof(Gcplx)));
+    CK(cudaMalloc((void**)&d_bsum, (size_t)K.natoms * K.natoms * K.radim * sizeof(Gcplx)));
+    
+    int lamda[64];
+    for (int j=0; j<32; ++j) {
+        int k, m;
+        if ((j==0)||(j==3)||(j==10)) k=0;
+        else if (j<3) k=3-j*2;
+        else if (j<6) k=18-j*4;
+        else if (j<8) k=13-j*2;
+        else if (j<10) k=51-j*6;
+        else if (j<13) k=46-j*4;
+        else if (j<15) k=108-j*8;
+        else k=0;
+        
+        if (j==10) m=2;
+        else if ((j==3)||(j==6)||(j==7)||(j==11)||(j==12)) m=1;
+        else m=0;
+        
+        lamda[j] = k; lamda[32+j] = m;
+    }
+    CK(cudaMemcpyToSymbol(c_lamda, lamda, 64 * sizeof(int)));
+    
+    int total_surviving = 0;
+    short2 *h_pairs = (short2*)malloc((size_t)msorder * K.natoms * K.natoms * sizeof(short2));
+    if (!h_pairs) { snprintf(g_err,sizeof(g_err),"malloc h_pairs falhou"); return 1; }
+    
+    for (int m = 2; m <= msorder; ++m) {
+        h_pair_offset[m] = total_surviving;
+        int count = 0;
+        for (int ia = 0; ia < K.natoms; ++ia) {
+            float emiter = patom[ia * 12 + 7];
+            if (m == 2 && emiter == 0.0f) continue;
+            for (int ib = 0; ib < K.natoms; ++ib) {
+                if (ib == ia) continue;
+                if (tevencut[(m-1)*K.natoms*K.natoms + ia*K.natoms + ib] == 0) continue;
+                
+                short2 p; p.x = ia; p.y = ib;
+                h_pairs[total_surviving + count] = p;
+                count++;
+            }
+        }
+        h_pair_count[m] = count;
+        total_surviving += count;
+    }
+    
+    if (total_surviving > 0) {
+        CK(cudaMalloc((void**)&d_surviving_pairs, (size_t)total_surviving * sizeof(short2)));
+        CK(cudaMemcpy(d_surviving_pairs, h_pairs, (size_t)total_surviving * sizeof(short2), cudaMemcpyHostToDevice));
+    }
+    free(h_pairs);
+    
+    return 0;
+}
+
+__global__ static void k_init_asum(Gcplx *asum, const Gcplx *devendetec, int natoms, int radim, int msorder)
+{
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    int ic = blockIdx.y * blockDim.y + threadIdx.y;
+    int ib = blockIdx.z * blockDim.z + threadIdx.z;
+    if (j >= radim || ic >= natoms || ib >= natoms) return;
+    
+    int id = ib * natoms * radim + ic * radim + j;
+    if (msorder > 0 && ic != ib) {
+        asum[id] = devendetec[id];
+    } else {
+        asum[id].re = 0.0f;
+        asum[id].im = 0.0f;
+    }
+}
+
+__global__ static void k_summation_step(
+    int m, int count, const short2 *pairs,
+    const Gcplx *bsum, Gcplx *asum, const Gcplx *devendetec,
+    const Gcplx *tevenelem, const int *tevendim, const int *tevenadd,
+    const float *tevenpar, const float *talpha, const float *tgamma,
+    const Gcplx *cexpix, int natoms, int radim, int exndata, int exmdata, int sizeint)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= count) return;
+    
+    int ia = pairs[idx].x;
+    int ib = pairs[idx].y;
+    
+    Gcplx csum[15];
+    for (int j = 0; j < radim; ++j) {
+        csum[j] = devendetec[ia * natoms * radim + ib * radim + j];
+    }
+    
+    for (int ic = 0; ic < natoms; ++ic) {
+        int id = ia * natoms * natoms + ib * natoms + ic;
+        int evedim = tevendim[id];
+        
+        if (sizeint < 4 && m > 5) evedim >>= 12;
+        else if (m > 8) evedim >>= 24;
+        else evedim >>= (m - 2) * 4;
+        
+        evedim &= 15;
+        if (ic == ib || evedim < 1) continue;
+        
+        int k = tevenadd[id];
+        int eegdim = (int)tevenpar[k * 10 + 5];
+        int megadd = ib * natoms * radim + ic * radim;
+        int mevadd = (int)tevenpar[k * 10 + 6];
+        
+        if (evedim == 1) {
+            Gcplx v = cmul(bsum[megadd], tevenelem[mevadd]);
+            csum[0] = cadd(csum[0], v);
+        } else if (evedim < 16 && eegdim < 16) {
+            float xa = talpha[id];
+            float xb = tgamma[id];
+            
+            Gcplx prev_row[16];
+            Gcplx curr_row[16];
+            
+            for (int j = 0; j < evedim; ++j) {
+                for (int kk = 0; kk < evedim; ++kk) {
+                    int p = c_lamda[j];
+                    int q = c_lamda[kk];
+                    
+                    Gcplx algam_t;
+                    if (p == 0 && q == 0) {
+                        algam_t.re = 1.0f; algam_t.im = 0.0f;
+                    } else if (p == 0 && q < 0) {
+                        algam_t.re = curr_row[kk-1].re;
+                        algam_t.im = -curr_row[kk-1].im;
+                    } else if (p < 0 && q == 0) {
+                        algam_t.re = prev_row[kk].re;
+                        algam_t.im = -prev_row[kk].im;
+                    } else if (p < 0 && q > 0) {
+                        algam_t.re = prev_row[kk+1].re;
+                        algam_t.im = -prev_row[kk+1].im;
+                    } else if (p < 0 && q < 0) {
+                        algam_t.re = prev_row[kk-1].re;
+                        algam_t.im = -prev_row[kk-1].im;
+                    } else {
+                        float xc = -p * xb - q * xa;
+                        algam_t = d_fexpix(cexpix, exndata, exmdata, xc);
+                    }
+                    curr_row[kk] = algam_t;
+                    
+                    Gcplx v = cmul(algam_t, bsum[megadd + kk]);
+                    v = cmul(v, tevenelem[mevadd + j * eegdim + kk]);
+                    csum[j] = cadd(csum[j], v);
+                }
+                for (int kk = 0; kk < evedim; ++kk) {
+                    prev_row[kk] = curr_row[kk];
+                }
+            }
+        }
+    }
+    
+    for (int j = 0; j < radim; ++j) {
+        asum[ia * natoms * radim + ib * radim + j] = csum[j];
+    }
+}
+
+extern "C" int mscdgpu_summation(float akin, const Gcplx *tevenelem, Gcplx *asum_host, const float *patom)
+{
+    if (!g_ready) { snprintf(g_err,sizeof(g_err),"setup nao chamado"); return 1; }
+    
+    CK(cudaMemcpy(d_tevenelem, tevenelem, (size_t)g_ntrielem * sizeof(Gcplx), cudaMemcpyHostToDevice));
+    
+    dim3 threads_init(16, 8, 8);
+    dim3 blocks_init((K.radim + 15)/16, (K.natoms + 7)/8, (K.natoms + 7)/8);
+    k_init_asum<<<blocks_init, threads_init>>>(d_asum, D.devendetec, K.natoms, K.radim, K.msorder);
+    CK(cudaGetLastError());
+    
+    Gcplx *curr_asum = d_asum;
+    Gcplx *curr_bsum = d_bsum;
+    int sizeint = sizeof(int);
+    
+    for (int m = K.msorder; m >= 2; --m) {
+        CK(cudaMemcpy(curr_bsum, curr_asum, (size_t)K.natoms * K.natoms * K.radim * sizeof(Gcplx), cudaMemcpyDeviceToDevice));
+        
+        int count = h_pair_count[m];
+        if (count > 0) {
+            int offset = h_pair_offset[m];
+            int nb = (count + 127) / 128;
+            k_summation_step<<<nb, 128>>>(
+                m, count, d_surviving_pairs + offset,
+                curr_bsum, curr_asum, D.devendetec, d_tevenelem,
+                d_tevendim, d_tevenadd, d_tevenpar, d_talpha, d_tgamma,
+                D.cexpix, K.natoms, K.radim, K.exndata, K.exmdata, sizeint
+            );
+            CK(cudaGetLastError());
+        }
+    }
+    
+    for (int ia = 0; ia < K.natoms; ++ia) {
+        if (patom[ia*12+7] != 0.0f) {
+            CK(cudaMemcpy(asum_host + ia*K.natoms*K.radim, curr_asum + ia*K.natoms*K.radim, (size_t)K.natoms * K.radim * sizeof(Gcplx), cudaMemcpyDeviceToHost));
+        }
+    }
+    
+    return 0;
+}
+
+
 extern "C" void mscdgpu_teardown(void)
 { if (!g_ready) return;
   cudaFree(D.patom); cudaFree(D.devenpar); cudaFree(D.rotmata);
   cudaFree(D.rotmatc); cudaFree(D.thermat); cudaFree(D.aweight);
   cudaFree(D.hankmat_a); cudaFree(D.hankarg_b); cudaFree(D.phasec);
   cudaFree(D.cexpix); cudaFree(D.pairgeo); cudaFree(D.pairkind);
-  cudaFree(D.devenelem); cudaFree(D.alnum);
+  cudaFree(D.alnum);
+  cudaFree((void*)D.devenadd); cudaFree(D.devendetec);
+  
+  cudaFree(d_tevendim); cudaFree(d_tevenadd); cudaFree(d_tevenpar);
+  cudaFree(d_talpha); cudaFree(d_tgamma); cudaFree(d_surviving_pairs);
+  cudaFree(d_asum); cudaFree(d_bsum); cudaFree(d_tevenelem);
+  d_tevendim=NULL; d_tevenadd=NULL; d_tevenpar=NULL;
+  d_talpha=NULL; d_tgamma=NULL; d_surviving_pairs=NULL;
+  d_asum=NULL; d_bsum=NULL; d_tevenelem=NULL;
+  
   memset(&D,0,sizeof(D)); g_ready=0;
 }
 
