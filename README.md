@@ -55,6 +55,16 @@ regressão**: mudaram só de 0,6724 0,8647 para 0,6710 0,8642 quando 783 das 787
 linhas de intensidade mudaram, porque são fatores de escala do ajuste. O teste é
 o `baseline/regressao.sh`, que compara as 787 linhas byte a byte.
 
+> **Em aberto (06/08/2026): os documentos discordam do valor ANTIGO.** Aqui está
+> `0,6724 0,8647`; o `CLAUDE.md:210` e o `OTIMIZACAO.md:140` dizem
+> `0.6719 0.8649`. **Dois contra um**, então este arquivo é o suspeito — mas
+> ninguém mediu, e por isso nada foi alterado. O valor **atual** (`0.6710 0.8642`)
+> é consenso nos três e está confirmado nas 24 rodadas do `baseline/escala.csv`;
+> a divergência é só sobre de onde se partiu. Para fechar: rodar
+> `baseline/randmscd_parallel.baseline` na configuração antiga
+> (`Cov0.txt.k16-slab.bak`) e ler o `factors` do log. Enquanto isso, **não cite
+> o valor antigo em texto de paper.**
+
 **Use `-np ≥ 4`, e evite `-np 6`.** O `np` ótimo **não é estável** entre janelas
 de medição — ver "Medições". O que é estável: `np=6` é consistentemente o pior
 de {4, 6, 8, 12}.
@@ -248,6 +258,12 @@ solves independentes — é o que vale portar. Mas repare que o lado esquerdo
 **não** é preparação trivial: são ~11,4 s de `natoms³` com deduplicação por hash
 e uma varredura de esparsidade, hoje inteiramente sequenciais. Com o laço a zero,
 o programa ainda levaria esses ~11,4 s.
+
+> **Correção de 06/08/2026.** Os "~11,4 s" e o "inteiramente sequenciais" valem
+> para o V4. **O V5 paralelizou o `pathcut` com OpenMP** — 66% desse bloco — e o
+> preparo caiu para **~5,4 s**, o que levantou o teto de Amdahl do port de
+> **11,6× para 22,3×** sem uma linha de CUDA. Ver a seção "V5" do
+> `OTIMIZACAO.md` e a correção da seção "O que **não** é paralelo" abaixo.
 
 A eq. (46) impõe uma restrição concreta ao formato dos dados: `tevenelem` (o lado
 caro) é indexado por **assinatura geométrica**, enquanto `talpha`/`tgamma` (o lado
@@ -554,6 +570,34 @@ Quatro coisas saem daí:
 > `fhankelfaca` é só uma interpolação de dois pontos que sai inline. O kernel que
 > passou é `thread ↦ par`, só de registrador, sem *shared memory* nenhuma.
 > **Terceira vez que a leitura do código erra neste projeto.** Ver `PLANO_CUDA.md`.
+
+> **Atualização de 06/08/2026 — a Fase 3 está feita, e o port ganhou.** Tudo que
+> esta seção discute como projeto agora tem número medido. O laço `summation`
+> inteiro foi para a placa (`k_summation_step`), e o tráfego de volta caiu de
+> 7,3 MB/ponto na Fase 2 para **31 KB/ponto**, devolvendo só as linhas dos átomos
+> emissores.
+>
+> | `-np` | V0 | V5 CPU | **Fase 3 GPU** |
+> |------:|---------:|---------:|---------:|
+> | 1 | 146,49 s | 122,02 s | **35,65 s** |
+> | 4 | 64,26 s | 40,50 s | **24,43 s** |
+> | 12 | 69,70 s | **38,77 s** | 37,79 s |
+>
+> **24,43 s é a melhor marca do projeto**, contra os 38,77 s do melhor CPU —
+> 1,59×. Validação rígida passou em todos os pontos (`max|dchi| = 1,000e-05`, o
+> piso de ruído do programa). Figura em `baseline/gpu-v0-v5.png`, derivação em
+> `OTIMIZACAO.md`, seção "Escalabilidade GPU".
+>
+> **E o `np` ótimo inverteu: era 12 no CPU, é 4 na GPU** — com 4 ranks as CPUs se
+> revezam orquestrando a placa em *overlap*; com 12 elas brigam pela mesma janela
+> de PCIe, o escalonador serializa e o tempo volta a 37,79 s, empatando com o V5.
+> **Mais ranks pioram.** O comando de produção é
+> `MSCD_GPU=1 mpirun -np 4 randmscd_gpu Cov0.txt`.
+>
+> O gargalo seguinte já tem nome, medido num sistema de 316 átomos: **latência de
+> lançamento de kernel**. A placa aparece com menos de 1% de uso porque passa o
+> tempo escalonando pedidos minúsculos, um ângulo por vez. A saída é *batching* —
+> centenas de ângulos por kernel. Ver "Fase 4" no `OTIMIZACAO.md`.
 
 **O alvo é o `alldblevent` / `evenelem`, 57% do laço.** `mscdrunc.cpp:753` varre
 os 40 562 pares distintos e para cada um chama `evenelem` (`mscdrunc.cpp:22`) até

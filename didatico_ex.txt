@@ -1,0 +1,30 @@
+   223    17     0     datakind beginning-row multi-curves
+-----------------------------------------------------------------
+Calculation of photoelectron diffraction and dichroism
+MSCD Parallel  Version 1.37 Yufeng Chen and Michel A Van Hove
+Lawrence Berkeley National Laboratory (LBNL), Berkeley, CA 94720
+Copyright (c) Van Hove Group 1997-1998. All rights reserved
+-----------------------------------------------------------------
+ angle-resolved photoemission extended fine structure (ARPEFS)
+ multiple scattering calculation of Ag(111)-3d
+ calculated by Guilherme (IFGW) on Aug  6, 2026
+
+   initial angular momentum (li) = 1   msorder=  8   raorder= 4
+   photon polarization angle (polar,azimuth) =(  30.0   0.0 ) (deg)
+
+   radius, depth and lattice constant=   9.0,  20.0 and   4.09 angstrom
+   cluster size= 247 atoms and spacings=  0.00  2.17  2.17  1.76 angs
+
+    1    11     1     1     1    11
+    1    11   30.00   90.00    1.00000    1.00000
+   90.0    0.0 0.0 0.0 0.0
+   91.0    0.0 0.0 0.0 0.0
+   92.0    0.0 0.0 0.0 0.0
+   93.0    0.0 0.0 0.0 0.0
+   94.0    0.0 0.0 0.0 0.0
+   95.0    0.0 0.0 0.0 0.0
+   96.0    0.0 0.0 0.0 0.0
+   97.0    0.0 0.0 0.0 0.0
+   98.0    0.0 0.0 0.0 0.0
+   99.0    0.0 0.0 0.0 0.0
+  100.0    0.0 0.0 0.0 0.0

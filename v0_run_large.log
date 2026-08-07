@@ -1,0 +1,22 @@
+-----------------------------------------------------------------
+Calculation of photoelectron diffraction and dichroism
+MSCD Parallel  Version 1.37 Yufeng Chen and Michel A Van Hove
+Lawrence Berkeley National Laboratory (LBNL), Berkeley, CA 94720
+Copyright (c) Van Hove Group 1997-1998. All rights reserved
+-----------------------------------------------------------------
+
+
+_____________________________________
+Job   1 of   1
+
+_____________________________________
+ Job report
+
+   1   1x2iron.in
+       Error 602 too many atoms, program terminated
+
+_____________________________________
+ Job report saved in file mscdout.txt
+ Messages saved in file mscdlist.txt
+
+Program terminated normally

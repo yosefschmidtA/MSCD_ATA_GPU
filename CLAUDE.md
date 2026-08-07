@@ -40,8 +40,31 @@ para economizar leitura de código:
 **A Fase 3 do port de CUDA está feita e validada.** Contudo, antes na Fase 2 o tempo aumentou para **66,19 s** em `np=1`. Isso ocorreu porque a transferência PCIe aumentou levemente (copiávamos os 7,3 MB do `devendetec` de volta para a CPU). Na Fase 3:
 
 - **Fase 3** (Summation para GPU): **CONCLUÍDO.** (05/08/2026). Tráfego pesado contornado! A GPU agora resolve todo o loop `m` com matriz esparsa e devolve apenas as linhas dos átomos emissores (31 KB/ponto). Tempo despencou de 66.19s (Fase 2) para fenomenais **37.69s**. Gargalo principal do PCIe aniquilado.
-- **Fase 4** (onevenemit / onemidetec na GPU): (Pendente).
-- **Fase 5** (pathcut na GPU): (Opcional, 1.7s).
+- **Fase 4** (pathcut na GPU): (Opcional, 1.7s).
+
+## Atualização de 06/08/2026 — capacidade e o teto de latência
+
+**O limite de átomos subiu de 300 para 1250** (`mscdruna.cpp:317` e `:368`,
+`patom[1250*12]` em `mscdrun.cpp` e `mscdrun.h`). Não é otimização, é capacidade:
+sem isso o `1x2iron.in` de 316 átomos dava erro 602. **O 1250 não é número
+redondo à toa** — `tevenadd` é indexado por `ia*natoms²+ib*natoms+ic` em `int`, e
+acima de **natoms ≈ 1290** isso estoura o int de 32 bits e corrompe em silêncio
+(`OTIMIZACAO.md:1088`). 1250³ = 1,95e9 contra o teto de 2,15e9: sobra 9% de
+folga. **Não suba mais esse limite sem passar o índice para 64 bits.**
+
+**Cache do `tevenelem` na GPU** (`mscdgpu.cu:625`, `last_akin`): só reenvia o
+array quando `akin` muda. Correto **porque a energia é fixa** neste modo
+(`scanmode=223`, `kmin=kmax`). **Atenção:** se algum dia ligar ajuste de
+geometria com energia fixa, `tevenelem` muda sem `akin` mudar e o cache serve
+lixo. Hoje não há gatilho (`trymax=0`).
+
+**O ganho do cache foi ~6 s, não o que se esperava** — a hipótese dos 240 GB de
+PCIe estava errada, porque o `pathcut` já poda 99,8% dos caminhos e o que trafega
+é minúsculo. **O gargalo real com 316 átomos é latência de lançamento de kernel**:
+a GPU aparece com <1% de uso porque passa o tempo escalonando pedidos liliputianos
+de vários ranks. É por isso que `np>4` piora. **A próxima etapa é *batching***:
+resolver centenas de ângulos por kernel, em vez de um. Derivação na seção "Fase 4"
+do `OTIMIZACAO.md`.
 
 ## Histórico de Armadilhas
 
@@ -50,12 +73,26 @@ para economizar leitura de código:
 - **O sintoma:** O script `./baseline/regressao-gpu.sh 1` passava com precisão perfeita, mas isso porque ele forçava a execução na GPU (`MSCD_GPU=1`). Quando o usuário rodou o binário manualmente *sem a variável de ambiente* (como exigido no fallback de CPU detalhado no `PLANO_CUDA.md`), a execução falhou silenciosamente e cuspiu zeros em todo o arquivo `.chi`.
 - **A correção:** O usuário percebeu que o arquivo de saída gerado estava preenchido com zeros. A solução foi restaurar a rota original da CPU e inserir um bloco `if (getenv("MSCD_GPU"))` dentro do macro, garantindo que o binário suporte as duas vias em tempo de execução. Nunca remova o caminho CPU da função, ele deve coexistir!
 
-**Mas o V5 com todos os núcleos ainda ganha:** `np=12` ≈ 42 s contra 60–64 s do
-build de GPU. O 2,04× é medido com os dois em `np=1`, que isola o kernel — **não
-é "a GPU ganhou do V5"**. Só 57% do laço está na placa; os outros 43% mais o
-preparo continuam num núcleo só. A GPU está praticamente ociosa (kernel + PCIe =
-~5 s dos 779 pontos), então as Fases 2 e 3 é que decidem. **A GPU também não toca
-no "Analyzing/Reanalyzing"** (`symtrivert`, do preparo) — esse é o alvo do V1/V2.
+**A GPU passou o V5 na Fase 3, e por larga margem.** *(Este parágrafo dizia o
+contrário até 06/08/2026 — era verdade na Fase 1, quando só 57% do laço estava na
+placa. A Fase 3 inverteu, e a versão antiga mandaria você otimizar o lado errado.)*
+
+| `-np` | V5 CPU | Fase 3 GPU |
+|---:|---:|---:|
+| 1 | 122,02 s | 35,65 s |
+| **4** | 40,50 s | **24,43 s** ← melhor marca do projeto |
+| 12 | **38,77 s** | 37,79 s |
+
+**`MSCD_GPU=1 mpirun -np 4` é o comando de produção.** O ótimo saiu de `np=12`
+(CPU) para **`np=4`** (GPU), e a razão é arquitetural: com 4 ranks as CPUs se
+revezam orquestrando a placa em *overlap* — um copia memória, outro dispara
+kernel, outro faz a física serial. Com 12 ranks brigando pela mesma janela de
+PCIe o escalonador serializa e o tempo volta para 37,79 s, empatando com o V5.
+**Mais ranks pioram, não melhoram.** Medição e derivação em `OTIMIZACAO.md:1093`,
+figura em `baseline/gpu-v0-v5.png`.
+
+**A GPU continua não tocando no "Analyzing/Reanalyzing"** (`symtrivert`, do
+preparo) — esse segue sendo alvo do V1/V2.
 
 **V6 (`beta` inteiro no `makerotation`) foi medido e REVERTIDO** — byte a byte
 idêntico, +1,5% em `np=1` e −3,5% em `np=12`. O achado que ele produziu é o que
@@ -129,11 +166,14 @@ doze; estão compilados e funcionando, e não interessam.
 make randmscd_parallel CPPFLAGS="-O3 -std=c++98 -w -fpermissive -fopenmp"
 mpirun --use-hwthread-cpus --bind-to none -np 1 randmscd_parallel Cov0.txt
 
-# GPU (Fase 1). O rm é obrigatório: os .o precisam de -DMSCDGPU, e o makefile
+# GPU (Fase 3). O rm é obrigatório: os .o precisam de -DMSCDGPU, e o makefile
 # não tem alvo clean nem sabe distinguir as duas variantes.
 rm -f *.o && make randmscd_gpu \
   CPPFLAGS="-O3 -std=c++98 -w -fpermissive -fopenmp -DMSCDGPU"
 ./baseline/regressao-gpu.sh 1
+
+# GPU em produção — np=4 é o ótimo medido, e np>4 PIORA (latência de kernel)
+MSCD_GPU=1 mpirun --use-hwthread-cpus -np 4 randmscd_gpu Cov0.txt
 ```
 
 **Os dois builds compartilham os `.o` e se atropelam.** Depois de mexer no

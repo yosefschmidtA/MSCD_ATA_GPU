@@ -1,0 +1,109 @@
+-----------------------------------------------------------------
+Calculation of photoelectron diffraction and dichroism
+MSCD Parallel  Version 1.37 Yufeng Chen and Michel A Van Hove
+Lawrence Berkeley National Laboratory (LBNL), Berkeley, CA 94720
+Copyright (c) Van Hove Group 1997-1998. All rights reserved
+-----------------------------------------------------------------
+
+
+_____________________________________
+Job   1 of   1
+
+       0      20       6       4   linitial lnum msorder raorder
+     316       7       3       9   natoms emiters katoms nlayer
+     223       0       0    2400   scanmode nfit nfollow npoint
+
+Analyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...
+
+This job allocated 3462.6 megabytes memory in    4 processors
+
+
+Multiple scattering calculation (msorder=6 raorder=4)
+
+    0.00% of try   1, job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+     1          14.31          12.00           2.50      2.7599185
+    0.04% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+     2          14.31          12.00           5.50      2.7578204
+    0.08% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+     3          14.31          12.00           8.50      2.7318099
+    0.12% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+     4          14.31          12.00          11.50      2.7250164
+    0.17% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+     5          14.31          12.00          14.50      2.7037735
+    0.21% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+     6          14.31          12.00          17.50      2.7059460
+    0.25% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+     7          14.31          12.00          20.50      2.7040589
+    0.29% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+     8          14.31          12.00          23.50      2.7328784
+    0.33% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+     9          14.31          12.00          26.50      2.7160518
+    0.38% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    10          14.31          12.00          29.50      2.7597170
+    0.42% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    11          14.31          12.00          32.50      2.7799642
+    0.46% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    12          14.31          12.00          35.50      2.8223450
+    0.50% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    13          14.31          12.00          38.50      2.8486726
+    0.54% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    14          14.31          12.00          41.50      2.8694658
+    0.58% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    15          14.31          12.00          44.50      2.8779824
+    0.62% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    16          14.31          12.00          47.50      2.8779557
+    0.67% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    17          14.31          12.00          50.50      2.8708782
+    0.71% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    18          14.31          12.00          53.50      2.8592882
+    0.75% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    19          14.31          12.00          56.50      2.8486586
+    0.79% of job   1 of   1 completed.

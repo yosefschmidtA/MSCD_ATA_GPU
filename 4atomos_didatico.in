@@ -1,0 +1,39 @@
+    741    10    112     datakind begining-row linenumbers
+----------------------------------------------------------------
+MSCD Version 1.00 Yufeng Chen and Michel A Van Hove
+Lawrence Berkeley National Laboratory (LBNL), Berkeley, CA 94720
+Copyright (c) Van Hove Group 1997. All rights reserved
+----------------------------------------------------------------
+    Cobalto Cubico
+
+un    "Yosef"   user name
+sn      Cobalto cubico      system name
+ps01    didatico_co.ph
+ps02    didatico_co.ph        
+rm01    rml9.txt        
+ex      Cobalt108.mscd             
+pe      saida_didatico_co.txt            
+
+223     10       0.001          scanmode,dispmode,ftolerance
+1       0        1       1       linitial,lnum,msorder,raorder
+1       0       3       0       layers,finals,fitmath,trymax
+13.63   13.63   0.0             kmin,kmax,kstep (per angstrom)
+18      72      3.0             dthetamin,dthetamax,dthetastep (degree)
+111.0   231.0   3.0             dphimin,dphimax,dphistep (degree)
+30.0    0.0     1               ltheta, lphi, beampol (degree)
+0.0     0.0     1.5             mtheta, mphi, acceptang (degree)
+0.0     3.0      4.086           radius,depth,lattice(angs)
+9       0.0     8.90    58.93   valence,bandgap(eV),density(g/cm3),mweight
+107.87  58.93   0.0     0.0     effective weight for kind 1-4 (amu)
+0       0.7     0.2             ATA, ATAWeight1, ATAWeight2, t=(1-ATAWeight)*t1+ATAWeight*t2)
+0.0     0.0     0.0   0.0       magnetization amplitude for kind 1-4
+0.0     0.0     0.0     0.005   vinner(eV),tdebye,tsample(K),pathcut
+0.0     0.0     0.0             fit try for vinner, tdebye and lattice
+
+1       1       1       0       layer, kind, emitter, lineatom
+0       1       0       1       latoms(xa,xb,ya,yb)#1
+ 1.000000         0.00000       unita(len ang)
+ 1.000000        90.00000       unitb(len ang)
+ 0.0              0.0           origin(len,ang) (in unit of lattice)
+ 0.0                            interlayer spacing (unit lattice)
+ 0.0    0.0      0.0            fit try for spacing, length and units

@@ -10,6 +10,9 @@ profundidade 20, 247 átomos.
 
 ### Onde o código está
 
+> **🎯 PLANO DE TESTE FUTURO (Anotação do Usuário):**
+> O usuário possui um sistema enorme que costumava ficar travado por **40 minutos** apenas na etapa de "Analyzing" (`symtrivert`) usando a versão V0 original. O próximo passo de investigação laboratorial do usuário será rodar esse mesmo sistema monstruoso com a versão atual (que possui o hash O(1) do V2). Se a otimização resolver os 40 minutos com folga, o usuário fará um *deep dive* com papel e caneta para estudar e entender exatamente o que foi alterado no código do `symtrivert` que permitiu esse milagre.
+
 - **V1, V2 e V4 aplicados e validados.** V1/V2 em
   `mscdrunb_not_reanalize.cpp` (`symtrivert`), **V4 em `mscdrund.cpp:128`**
   (o corte do `tevencut` antes de encher o `csum`). **V3 foi tentado e
@@ -1117,3 +1120,31 @@ Mas a lição mais valiosa dessa medição é arquitetural: **as CPUs agora orqu
 
 Para execuções produtivas futuras, `MSCD_GPU=1 mpirun -np 4` é o novo limite de performance.
 
+## Fase 4 — O Mistério da Latência e o Falso Gargalo da PCIe
+
+Na expansão de `1x2iron.in` de 122 para **316 átomos**, surgiu um comportamento inesperado. A quantidade de caminhos geométricos computados cresceu brutalmente, e com a GPU rodando, o gerenciador de processos acusava uso ocioso (< 1% da GPU).
+
+**A Primeira Hipótese (Falsa):** Acreditou-se que o gargalo seria o envio do array espesso `tevenelem` pelo barramento PCIe a cada volta do laço principal. Como o laço roda 2.400 vezes, um cálculo ingênuo sugeriu 240 GB de dados inúteis estrangulando a placa.
+**A Correção Aplicada (GPU V2):** Criou-se um cache: a GPU passou a memorizar a energia (`akin`). Em `scanmode=223` (varredura apenas de ângulo, energia fixa), o `cudaMemcpy` pesadíssimo de `tevenelem` é pulado.
+
+### O Benchmark Revelador: Banda Larga vs Latência
+
+Criou-se um script (`run_bench_v0_v2.sh`) alternando rodadas da GPU V0 (cópia burra na PCIe) contra a GPU V2 (cache ativado), com pausas de resfriamento.
+
+| Processos MPI (`-np`) | GPU V0 (Sem Cache PCIe) | GPU V2 (Com Cache PCIe) |
+| :--- | :--- | :--- |
+| **1** | 9m 35s (575.01s) | 9m 28s (568.76s) |
+| **2** | 5m 11s (311.79s) | 5m 05s (305.34s) |
+| **4** | **3m 29s (209.48s)** | **3m 28s (208.89s)** |
+| **6** | 3m 30s (210.07s) | 3m 29s (209.88s) |
+| **8** | 3m 36s (216.94s) | 3m 32s (212.43s) |
+| **12** | 3m 46s (226.90s) | 4m 04s (244.09s) |
+
+Tiramos três conclusões implacáveis da tabela:
+
+1. **O Gargalo da PCIe desabou:** A diferença de tempo entre a V0 e a V2 ficou restrita a ridículos **~6 segundos**. A intuição física estava cega: esquecemos que o próprio `pathcut` aniquila 99,8% dos caminhos distantes! A matriz `tevenelem` que sobrevive e trafega na PCIe é minúscula. A banda larga aguentou as 2.400 transferências dormindo.
+2. **A Física Escala Fortemente:** Em execução serial (`PE=1`), a GPU gastou quase 10 minutos. O aumento de 122 para 316 átomos realmente esticou os limites da máquina, sublinhando que cálculos maiores seriam impossíveis sem as otimizações anteriores.
+3. **O Verdadeiro "Assassino": Kernel Launch Latency:** Repare nas execuções de `PE=6` até `PE=12`. Adicionar processos deixa o código **mais lento**. Estamos sofrendo "Kernel Launch Latency Bound". A GPU computa 1 único ponto (ângulo) em microssegundos, mas a CPU leva mais tempo do que isso só para registrar o pedido na API da Nvidia e transacionar o *overhead*. Quando 12 cabeças MPI tentam acionar o driver CUDA simultaneamente com tarefas liliputianas, a latência de *context switch* corrói o processamento. A GPU aparece em 0% de uso porque passa o tempo todo escalonando requisições minúsculas.
+
+**Próxima Etapa (Futura):**
+Para domar a GPU e colocá-la em 100%, o programa deve agrupar (fazer *batching*) dos pontos. A placa deve engolir e resolver vetores de 1.000 ângulos de uma tacada só dentro de um mesmo kernel assíncrono, expurgando as chamadas MPI incessantes à API do CUDA.

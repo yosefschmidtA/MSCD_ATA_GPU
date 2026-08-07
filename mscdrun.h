@@ -194,7 +194,7 @@ dimmensions
     consideration of phase correction with respect to the origin
   fitvars[4*20] laycell[101*4] layorig[101*4] layfit[101*4]
   laxcell[101*4] laxorig[101*4]
-  aweight[4] patoms[300*12]
+  aweight[4] patoms[1250*12]
   tevenpar[ntrieven*10] devenpar[ndbleven*7]
   tusage[(numpe+1)*10] --- processor time distribution on computation,
     sending, receiving and idle

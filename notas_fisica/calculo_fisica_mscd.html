@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Cálculo Didático da Intensidade (XPD) para 3 Átomos</title>
+
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+  <style>
+    body { font-family: sans-serif; line-height: 1.6; padding: 2em; max-width: 800px; margin: 0 auto; }
+    h1 { color: #333; }
+    h2 { color: #555; border-bottom: 1px solid #ccc; padding-bottom: 0.3em; }
+    .math { overflow-x: auto; }
+  </style>
+</head>
+<body>
+<h1>Cálculo Didático da Intensidade (XPD) para 3 Átomos</h1>
+<p>Para evitar a loucura das funções de Hankel e harmônicos esféricos complexos do MSCD, vamos calcular o caso mais simples possível no papel (Aproximação de Onda Plana).</p>
+<p>Temos 3 átomos:</p>
+<ul>
+  <li><strong>Átomo 0 (Emissor):</strong> Na origem \((0,0,0)\).</li>
+  <li><strong>Átomo 1 (Espalhador A):</strong> Na posição \(\vec{r}_1\).</li>
+  <li><strong>Átomo 2 (Espalhador B):</strong> Na posição \(\vec{r}_2\).</li>
+</ul>
+<p>O detector está muito longe, na direção definida pelo vetor unitário \(\hat{k}\).</p>
+<hr>
+
+<h2>1. A Onda Direta (\(A_0\))</h2>
+<p>A onda que sai do emissor e vai direto para o detector não sofre nenhum desvio. Podemos representar a amplitude dela simplesmente como a onda viajando na direção \(\hat{k}\):</p>
+<div class="math">\[ A_0 = e^{i \vec{k} \cdot \vec{r}_0} \]</div>
+<p>Como \(\vec{r}_0 = 0\) (ele está na origem), temos:</p>
+<div class="math">\[ A_0 = 1 \]</div>
+<p><em>(Nota: Na vida real, multiplicamos pelo elemento de matriz inicial do fóton, mas vamos ignorar isso para focar na interferência).</em></p>
+<hr>
+
+<h2>2. Espalhamento Simples no Átomo 1 (\(A_1\))</h2>
+<p>O elétron viaja até o Átomo 1, bate nele e vai para o detector.</p>
+<ul>
+  <li>Ele viaja uma distância \(r_1\), acumulando uma fase \(e^{i k r_1}\).</li>
+  <li>Ao bater, a força com que o átomo rebate a onda na direção \(\hat{k}\) é dada pelo Fator de Espalhamento Complexo \(f(\theta_1)\), onde \(\theta_1\) é o ângulo de desvio.</li>
+  <li>Do átomo 1 até o detector, ele acumula uma fase geométrica \(-i \vec{k} \cdot \vec{r}_1\).</li>
+</ul>
+<p>A amplitude da onda que bate no Átomo 1 e vai pro detector é:</p>
+<div class="math">\[ A_1 = \frac{e^{i k r_1}}{r_1} \cdot f(\theta_1) \cdot e^{-i \vec{k} \cdot \vec{r}_1} \]</div>
+<p>E a mesma coisa acontece para o <strong>Átomo 2</strong>, de forma independente:</p>
+<div class="math">\[ A_2 = \frac{e^{i k r_2}}{r_2} \cdot f(\theta_2) \cdot e^{-i \vec{k} \cdot \vec{r}_2} \]</div>
+<hr>
+
+<h2>3. A Intensidade Total</h2>
+<p>Se desligarmos o espalhamento duplo (Átomo 1 rebatendo pro 2), a física quântica diz que as ondas se somam antes de serem detectadas (Princípio da Superposição).</p>
+<p>A Amplitude Total (\(A_{total}\)) chegando no detector é:</p>
+<div class="math">\[ A_{total} = A_0 + A_1 + A_2 \]</div>
+<p>Substituindo tudo:</p>
+<div class="math">\[ A_{total} = 1 + \left( \frac{e^{i k r_1}}{r_1} f(\theta_1) e^{-i \vec{k} \cdot \vec{r}_1} \right) + \left( \frac{e^{i k r_2}}{r_2} f(\theta_2) e^{-i \vec{k} \cdot \vec{r}_2} \right) \]</div>
+<p>Para achar o que você realmente enxerga na tela do computador (a <strong>Intensidade</strong> \(I\)), você tira o Módulo ao Quadrado da Amplitude:</p>
+<div class="math">\[ I(\hat{k}) = | A_{total} |^2 = A_{total} \cdot A_{total}^* \]</div>
+<p>Quando você faz essa multiplicação, nascem os termos cruzados (como \(A_0 A_1^*\)). São esses termos cruzados que dependem da diferença de caminho (\(\Delta r = k r_1 - \vec{k} \cdot \vec{r}_1\)) e geram os picos construtivos e vales destrutivos no gráfico de difração!</p>
+<hr>
+
+<h2>O Desafio Oculto</h2>
+<p>Para colocar números nisso na caneta:</p>
+<ol>
+  <li>Você escolheria o vetor do detector \(\hat{k} = (\sin\theta\cos\phi, \sin\theta\sin\phi, \cos\theta)\).</li>
+  <li>Calculariam os produtos escalares \(\vec{k} \cdot \vec{r}_1\).</li>
+  <li>Teria que ter o valor complexo de \(f(\theta_1)\) pronto (algo como \(0.5 + 0.2i\)).</li>
+  <li>Faria a soma complexa e tiraria o módulo.</li>
+</ol>
+<p>Mesmo super simplificado, fazer para 1 único ângulo \(\theta, \phi\) ocuparia uma folha de caderno inteira! Agora imagine o código repetindo isso milhões de vezes.</p>
+<hr>
+
+<h2>4. Dissecando o "Analyzing" na Mão (4 Átomos)</h2>
+<p>Para entender a fase de <em>Analyzing</em> (onde o código descobre as geometrias únicas), vamos pegar o cenário mais simples possível que gera ângulos de espalhamento duplo: <strong>4 átomos dispostos em um quadrado</strong>, com distância de \(1 \text{ \AA}\) entre os vizinhos.</p>
+
+<h3>As Coordenadas</h3>
+<ul>
+  <li><strong>A0 (Emissor):</strong> \((0, 0, 0)\)</li>
+  <li><strong>A1:</strong> \((1, 0, 0)\)</li>
+  <li><strong>A2:</strong> \((1, 1, 0)\)</li>
+  <li><strong>A3:</strong> \((0, 1, 0)\)</li>
+</ul>
+
+<div class="mermaid">
+graph TD
+    A3["A3 (0,1,0)"] ---|1 Å| A2["A2 (1,1,0)"]
+    A0["A0 (0,0,0)"] ---|1 Å| A1["A1 (1,0,0)"]
+    A0 ---|1 Å| A3
+    A1 ---|1 Å| A2
+    A0 -.->|1.41 Å| A2
+</div>
+
+<h3>O que é um "Caminho de Espalhamento Duplo"?</h3>
+<p>O elétron faz o seguinte percurso: <strong>Emissor (ic)</strong> \(\rightarrow\) <strong>Espalhador 1 (ib)</strong> \(\rightarrow\) <strong>Espalhador 2 (ia)</strong>.</p>
+<p><em>(O MSCD chama o último átomo de <code>ia</code>, o do meio de <code>ib</code> e o primeiro de <code>ic</code>).</em></p>
+
+<h3>A Assinatura Geométrica (A Receita do "Analyzing")</h3>
+<p>O MSCD quer <strong>deduplicar</strong> caminhos que têm a mesma física. Para cada trio <code>(ia, ib, ic)</code>, ele extrai 3 números:</p>
+<ol>
+  <li><strong>\(r_1\)</strong>: A distância entre <code>ic</code> e <code>ib</code>.</li>
+  <li><strong>\(1/r_2\)</strong>: O inverso da distância entre <code>ib</code> e <code>ia</code>.</li>
+  <li><strong>\(\cos \beta\)</strong>: O cosseno do ângulo de espalhamento no átomo do meio (<code>ib</code>).</li>
+</ol>
+<p>Se as 3 variáveis baterem, os trios vão para o mesmo balde!</p>
+
+<h3>Calculando um Trio (Caminho) na Mão</h3>
+<p>Vamos testar o caminho: <strong>Nasce em A0, bate em A1, e rebate para A2.</strong></p>
+<ul>
+  <li><code>ic</code> = A0 \((0,0,0)\)</li>
+  <li><code>ib</code> = A1 \((1,0,0)\)</li>
+  <li><code>ia</code> = A2 \((1,1,0)\)</li>
+</ul>
+
+<div class="mermaid">
+graph LR
+    ic(("ic (A0)\nEmissor")) == "Vetor 1" ==> ib(("ib (A1)\nQuique 1"))
+    ib == "Vetor 2" ==> ia(("ia (A2)\nQuique 2"))
+    ib -. "Continuação (se não batesse)" .-> fantasma[ ]
+    style ic fill:#ff9999,stroke:#f00
+    style ib fill:#99ccff,stroke:#00f
+    style ia fill:#99ff99,stroke:#0f0
+</div>
+
+<p><strong>Fazendo a conta:</strong></p>
+<ul>
+  <li><strong>Vetor 1 (ic \(\rightarrow\) ib):</strong> A1 - A0 = \((1, 0, 0)\). Tamanho \(r_1 = 1\).</li>
+  <li><strong>Vetor 2 (ib \(\rightarrow\) ia):</strong> A2 - A1 = \((0, 1, 0)\). Tamanho \(r_2 = 1\). O inverso é \(1/r_2 = 1.0\).</li>
+  <li><strong>\(\cos \beta\) (Produto Escalar):</strong> O ângulo de deflexão \(\beta\) é o ângulo entre "Vetor 1" e "Vetor 2". O cosseno é o produto escalar (multiplicação de cada eixo): \((1 \cdot 0) + (0 \cdot 1) + (0 \cdot 0) = 0\). Ou seja, deflexão de 90º!</li>
+</ul>
+<p><strong>Assinatura do trio (A2, A1, A0):</strong> <code>[ r1 = 1.0, 1/r2 = 1.0, cos(B) = 0.0 ]</code></p>
+
+<h3>A Mágica da Deduplicação</h3>
+<p>Agora tente outro caminho: Nasce em <strong>A3</strong>, bate em <strong>A2</strong>, rebate para <strong>A1</strong>.</p>
+<ul>
+  <li>Vetor 1 (A3 \(\rightarrow\) A2): \((1, 0, 0)\). \(r_1 = 1\).</li>
+  <li>Vetor 2 (A2 \(\rightarrow\) A1): \((0, -1, 0)\). \(r_2 = 1\).</li>
+  <li>\(\cos \beta\): \((1 \cdot 0) + (0 \cdot -1) + (0 \cdot 0) = 0\).</li>
+</ul>
+<p><strong>Assinatura desse trio (A1, A2, A3):</strong> <code>[ r1 = 1.0, 1/r2 = 1.0, cos(B) = 0.0 ]</code></p>
+<p><strong>Conclusão:</strong> Os dois caminhos deram a mesma exata geometria e ângulo de espalhamento! O código do MSCD só vai rodar as pesadas contas quânticas de fase e amplitude UMA ÚNICA VEZ para essa assinatura geométrica, em vez de duas. Para 316 átomos, ele condensa 31 milhões de rotas em alguns milhares de baldes!</p>
+
+<hr>
+
+<h2>5. Mão na Massa: Calculando a Intensidade Final (Na Unha)</h2>
+
+<p>Agora vamos fazer o que o computador faz: calcular um número real de Intensidade para uma direção específica do detector. Para não levarmos dias, vamos calcular apenas o <strong>Espalhamento Simples (Single Scattering)</strong>. O espalhamento duplo (que vimos acima) segue a mesma lógica, mas com mais uma etapa de caminho.</p>
+
+<h3>O Cenário Escolhido</h3>
+<ul>
+  <li><strong>Geometria:</strong> 4 átomos em um quadrado (face do cubo).</li>
+  <li><strong>Emissor:</strong> A0 \((0, 0, 0)\). Escolhemos a origem porque corta metade das contas!</li>
+  <li><strong>Espalhadores:</strong> A1 \((1, 0, 0)\), A2 \((1, 1, 0)\), A3 \((0, 1, 0)\).</li>
+  <li><strong>Distância entre átomos:</strong> \(1 \text{ \AA}\).</li>
+</ul>
+
+<h3>A Direção do Detector (\(\theta = 30^\circ\), \(\phi = 90^\circ\))</h3>
+<p>O detector está muito longe. A direção dele é o vetor unitário \(\hat{k}\):</p>
+<div class="math">\[ \hat{k}_x = \sin(30^\circ) \cos(90^\circ) = 0.5 \times 0 = 0 \]</div>
+<div class="math">\[ \hat{k}_y = \sin(30^\circ) \sin(90^\circ) = 0.5 \times 1 = 0.5 \]</div>
+<div class="math">\[ \hat{k}_z = \cos(30^\circ) \approx 0.866 \]</div>
+<p>Logo, o vetor direção do detector é: <strong>\(\hat{k} = (0,\ 0.5,\ 0.866)\)</strong>.</p>
+
+<h3>A Energia do Elétron (\(k\))</h3>
+<p>Vamos assumir que o elétron foi ejetado com uma energia cinética que lhe dá um número de onda <strong>\(k = 5 \text{ \AA}^{-1}\)</strong> (aproximadamente 95 eV). O vetor de onda que viaja para o detector é \(\vec{K} = k \cdot \hat{k} = (0,\ 2.5,\ 4.33)\).</p>
+<p><em>Fator de espalhamento \(f(\theta)\):</em> Na vida real é um número complexo maluco. Para conseguirmos fazer na mão, vamos fingir que os átomos rebatem as ondas igualmente para todos os lados com uma força de <strong>\(f = 0.5\)</strong> (puramente real).</p>
+
+---
+
+<h3>Passo 1: A Onda Direta (\(A_0\))</h3>
+<p>O elétron sai do A0 e vai reto para o detector. Como ele nasce na origem (\(r=0\)), a fase inicial é zero.</p>
+<div class="math">\[ A_0 = 1 \]</div>
+
+<h3>Passo 2: A Onda que bate em A1 e rebate (\(A_1\))</h3>
+<p>Posição de A1: \(\vec{r}_1 = (1, 0, 0)\). Distância percorrida \(r_1 = 1\).</p>
+<ul>
+  <li>Fase ganha viajando até A1: \(k \cdot r_1 = 5 \times 1 = 5\).</li>
+  <li>A força do quique: \(f = 0.5\).</li>
+  <li>Fase geométrica projetada na direção do detector: \(-\vec{K} \cdot \vec{r}_1\).<br>
+  \(\vec{K} \cdot \vec{r}_1 = (0 \times 1) + (2.5 \times 0) + (4.33 \times 0) = 0\).</li>
+</ul>
+<div class="math">\[ A_1 = \frac{f}{r_1} e^{i (k r_1 - \vec{K} \cdot \vec{r}_1)} = \frac{0.5}{1} e^{i(5 - 0)} = 0.5 e^{5i} \]</div>
+
+<h3>Passo 3: A Onda que bate em A3 e rebate (\(A_3\))</h3>
+<p>Posição de A3: \(\vec{r}_3 = (0, 1, 0)\). Distância \(r_3 = 1\).</p>
+<ul>
+  <li>Fase viajando: \(k \cdot r_3 = 5\).</li>
+  <li>Fase geométrica projetada: \(\vec{K} \cdot \vec{r}_3 = (0 \times 0) + (2.5 \times 1) + (4.33 \times 0) = 2.5\).</li>
+</ul>
+<div class="math">\[ A_3 = \frac{0.5}{1} e^{i(5 - 2.5)} = 0.5 e^{2.5i} \]</div>
+
+<h3>Passo 4: A Onda que bate em A2 (Diagonal) e rebate (\(A_2\))</h3>
+<p>Posição de A2: \(\vec{r}_2 = (1, 1, 0)\). Distância \(r_2 = \sqrt{1^2 + 1^2} \approx 1.414\).</p>
+<ul>
+  <li>Fase viajando: \(k \cdot r_2 = 5 \times 1.414 = 7.07\).</li>
+  <li>Fator de queda (1/r): \(\frac{0.5}{1.414} \approx 0.35\).</li>
+  <li>Fase geométrica projetada: \(\vec{K} \cdot \vec{r}_2 = (0 \times 1) + (2.5 \times 1) + (4.33 \times 0) = 2.5\).</li>
+</ul>
+<div class="math">\[ A_2 = 0.35 e^{i(7.07 - 2.5)} = 0.35 e^{4.57i} \]</div>
+
+---
+
+<h3>Passo 5: Somando as Ondas Quânticas</h3>
+<p>A amplitude total chegando no detector em \(\theta=30, \phi=90\) é a soma de todos os caminhos:</p>
+<div class="math">\[ A_{total} = A_0 + A_1 + A_3 + A_2 \]</div>
+<div class="math">\[ A_{total} = 1 + 0.5 e^{5i} + 0.5 e^{2.5i} + 0.35 e^{4.57i} \]</div>
+
+<p>Para somar números complexos com expoente \(e^{i\theta}\), usamos Euler (\(e^{ix} = \cos(x) + i\sin(x)\)). Lembre-se que as fases estão em radianos!</p>
+<ul>
+  <li>\(A_1 = 0.5 (\cos 5 + i\sin 5) = 0.5 (0.284 - 0.959i) = 0.142 - 0.480i\)</li>
+  <li>\(A_3 = 0.5 (\cos 2.5 + i\sin 2.5) = 0.5 (-0.801 + 0.598i) = -0.401 + 0.299i\)</li>
+  <li>\(A_2 = 0.35 (\cos 4.57 + i\sin 4.57) = 0.35 (-0.157 - 0.988i) = -0.055 - 0.346i\)</li>
+</ul>
+
+<p><strong>Somando a Parte Real:</strong> \(1 + 0.142 - 0.401 - 0.055 = 0.686\)</p>
+<p><strong>Somando a Parte Imaginária:</strong> \(0 - 0.480 + 0.299 - 0.346 = -0.527i\)</p>
+<div class="math">\[ A_{total} = 0.686 - 0.527i \]</div>
+
+<h3>Passo 6: A Intensidade Final!</h3>
+<p>A tela do MSCD imprime a intensidade \(I\), que é o quadrado da amplitude (Parte Real² + Parte Imaginária²):</p>
+<div class="math">\[ I = (0.686)^2 + (-0.527)^2 = 0.471 + 0.278 = 0.749 \]</div>
+
+<p><strong>Pronto!</strong> A intensidade medida no detector no ângulo \(\theta=30^\circ, \phi=90^\circ\) é de <strong>\(0.749\) unidades arbitrárias</strong>.</p>
+<p>Se você mudasse o ângulo, o vetor \(\hat{k}\) mudaria, as projeções \(\vec{K} \cdot \vec{r}\) mudariam, as fases no expoente iriam se alinhar (construtivo, \(I\) grande) ou se anular (destrutivo, \(I\) pequeno). É fazendo essa mesmíssima conta para 2.400 ângulos diferentes que o computador desenha o gráfico!</p>
+
+<hr>
+
+<h2>6. A Realidade do Código: O Formalismo de Rehr-Albers</h2>
+<p>O cálculo que fizemos na Seção 5 usou a <em>Aproximação de Onda Plana</em>. O programa MSCD <strong>não faz isso</strong>. Como os átomos de um cristal estão muito próximos (poucos Ångströms), a onda de elétrons ainda é muito "curva" (esférica) quando bate no vizinho. Tratar uma bola como uma parede plana gera erros gigantes na intensidade final.</p>
+
+<p>Para resolver isso sem demorar a idade do universo calculando Funções de Green exatas, o MSCD usa o genial <strong>Formalismo de Matrizes Separáveis de Rehr-Albers (1990)</strong>.</p>
+<p>Se fôssemos calcular o caminho do emissor (A0) para o espalhador (A1) e depois para o detector com Rehr-Albers, a matemática deixaria de ser uma simples multiplicação de 3 números e viraria uma <strong>multiplicação de matrizes</strong>.</p>
+
+<h3>Mudança 1: A Rotação do Universo (O `rotmat` do código)</h3>
+<p>Na onda plana, o ângulo do elétron só importa no final (\(\theta\)). No mundo esférico, o formato orbital do elétron (s, p, d, f) importa. Para as contas não explodirem, o Rehr-Albers exige que o "Eixo Z" do universo sempre aponte na direção do voo do elétron.</p>
+<p>Toda vez que o elétron voa de um átomo para outro, o código tem que multiplicar a onda por uma <strong>Matriz de Rotação de Euler</strong> para "girar o universo" até o Eixo Z alinhar com a ponte entre os átomos. É isso que a função pesadíssima <code>makerotation</code> (que vimos nas otimizações) faz no MSCD!</p>
+
+<h3>Mudança 2: O Fator de Espalhamento vira a T-Matrix (\(t_l\))</h3>
+<p>No nosso cálculo manual, usamos um simples \(f = 0.5\). No Rehr-Albers, o átomo não é um ponto, ele é uma nuvem eletrônica. O espalhamento é descrito por uma Matriz T diagonal (os <em>Phase Shifts</em>).</p>
+<p>Cada formato de onda bate no átomo e atrasa de um jeito diferente (\(\delta_l\)):</p>
+<div class="math">\[ t_l = \sin(\delta_l) e^{i\delta_l} \]</div>
+<p>Onde \(l\) é o momento angular (0 para s, 1 para p, 2 para d...). O MSCD carrega esses \(\delta_l\) daquele arquivo <code>phase</code> que fica na pasta de inputs.</p>
+
+<h3>Mudança 3: A Função de Green vira o Propagador (\(\Gamma\))</h3>
+<p>A fase geométrica \(\frac{e^{ikr}}{r}\) que usamos é substituída por uma multiplicação de matrizes de propagação \(\tilde{\Gamma}\) e \(\Gamma\). Elas contêm polinômios (baseados nas funções de Hankel esféricas) que dependem de \(1/(kr)\):</p>
+<div class="math">\[ G_{L, L'}(r) = \frac{e^{ikr}}{r} \sum_{\lambda} \tilde{\Gamma}_{L \lambda}(kr) \Gamma_{\lambda L'}(kr) \]</div>
+<p>Essas matrizes \(\Gamma\) adicionam os fatores de correção de curvatura: \(\frac{1}{(kr)^2}\), \(\frac{1}{(kr)^3}\), etc. <br>
+<em>(Se a distância \(r\) for infinita, \(1/r^2 \approx 0\), a matriz vira 1, e o Rehr-Albers se transforma magicamente na conta da Seção 5!)</em></p>
+
+<h3>A Equação Final que o MSCD Roda (Espalhamento Simples)</h3>
+<p>Para o átomo A1, em vez de \(A_1 = \frac{e^{ikr}}{r} f(\theta) e^{-i\vec{K}\cdot\vec{r}}\), o MSCD calcula algo como:</p>
+<div class="math">\[ A_1 = \sum_{L, L'} e^{-i\vec{K}\cdot\vec{r}_1} \cdot [\text{Rot}(\hat{k} \leftarrow \vec{r}_1)] \cdot [t_l] \cdot [\tilde{\Gamma} \cdot \Gamma] \cdot [\text{Rot}(\vec{r}_1 \leftarrow \vec{r}_0)] \cdot [\text{Emissão}] \]</div>
+
+<p><strong>Por que não fizemos na unha?</strong><br>
+Se o <code>raorder</code> (Ordem de Rehr-Albers) do MSCD for 4, essas matrizes têm tamanho até \(16 \times 16\). Para cada único ângulo, o código faz dezenas de replicações e multiplicações de matrizes \(16 \times 16\) contendo números complexos pesados, giros de Euler e polinômios de Hankel. Fazer UM caminho de UM ângulo ocuparia um quadro negro inteiro!</p>
+
+<p>É por isso que aquele seu benchmark mostrou que o gargalo real da GPU não era a memória: era a API sofrendo para dar conta de tantas chamadas matemáticas minúsculas (os ângulos de Euler e matrizes de Hankel) vindas de dezenas de caminhos multiplicados pelos 316 átomos.</p>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true });
+</script>
+</body>
+</html>

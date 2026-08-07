@@ -1,0 +1,20 @@
+-----------------------------------------------------------------
+Calculation of photoelectron diffraction and dichroism
+MSCD Parallel  Version 1.37 Yufeng Chen and Michel A Van Hove
+Lawrence Berkeley National Laboratory (LBNL), Berkeley, CA 94720
+Copyright (c) Van Hove Group 1997-1998. All rights reserved
+-----------------------------------------------------------------
+
+
+_____________________________________
+Job   1 of   1
+
+       0      20       6       4   linitial lnum msorder raorder
+     316       7       3       9   natoms emiters katoms nlayer
+     223       0       0    2400   scanmode nfit nfollow npoint
+
+Analyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...

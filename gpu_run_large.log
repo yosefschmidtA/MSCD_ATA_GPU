@@ -1,0 +1,457 @@
+-----------------------------------------------------------------
+Calculation of photoelectron diffraction and dichroism
+MSCD Parallel  Version 1.37 Yufeng Chen and Michel A Van Hove
+Lawrence Berkeley National Laboratory (LBNL), Berkeley, CA 94720
+Copyright (c) Van Hove Group 1997-1998. All rights reserved
+-----------------------------------------------------------------
+
+
+_____________________________________
+Job   1 of   1
+
+       0      20       6       4   linitial lnum msorder raorder
+     316       7       3       9   natoms emiters katoms nlayer
+     223       0       0    2400   scanmode nfit nfollow npoint
+
+Analyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...
+Reanalyzing, please wait ...
+
+This job allocated 3462.6 megabytes memory in    4 processors
+
+
+Multiple scattering calculation (msorder=6 raorder=4)
+
+    0.00% of try   1, job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+     1          14.31          12.00           2.50      2.7599185
+    0.04% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+     2          14.31          12.00           5.50      2.7578204
+    0.08% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+     3          14.31          12.00           8.50      2.7318099
+    0.12% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+     4          14.31          12.00          11.50      2.7250164
+    0.17% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+     5          14.31          12.00          14.50      2.7037735
+    0.21% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+     6          14.31          12.00          17.50      2.7059460
+    0.25% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+     7          14.31          12.00          20.50      2.7040589
+    0.29% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+     8          14.31          12.00          23.50      2.7328784
+    0.33% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+     9          14.31          12.00          26.50      2.7160518
+    0.38% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    10          14.31          12.00          29.50      2.7597170
+    0.42% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    11          14.31          12.00          32.50      2.7799642
+    0.46% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    12          14.31          12.00          35.50      2.8223450
+    0.50% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    13          14.31          12.00          38.50      2.8486726
+    0.54% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    14          14.31          12.00          41.50      2.8694658
+    0.58% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    15          14.31          12.00          44.50      2.8779824
+    0.62% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    16          14.31          12.00          47.50      2.8779557
+    0.67% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    17          14.31          12.00          50.50      2.8708782
+    0.71% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    18          14.31          12.00          53.50      2.8592882
+    0.75% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    19          14.31          12.00          56.50      2.8486586
+    0.79% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    20          14.31          12.00          59.50      2.8151150
+    0.83% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    21          14.31          12.00          62.50      2.7944381
+    0.88% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    22          14.31          12.00          65.50      2.7731755
+    0.92% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    23          14.31          12.00          68.50      2.7474415
+    0.96% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    24          14.31          12.00          71.50      2.7064998
+    1.00% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    25          14.31          12.00          74.50      2.6407235
+    1.04% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    26          14.31          12.00          77.50      2.5818636
+    1.08% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    27          14.31          12.00          80.50      2.5290205
+    1.12% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    28          14.31          12.00          83.50      2.4576383
+    1.17% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    29          14.31          12.00          86.50      2.4784582
+    1.21% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    30          14.31          12.00          89.50      2.4524939
+    1.25% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    31          14.31          12.00          92.50      2.4119794
+    1.29% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    32          14.31          12.00          95.50      2.4313922
+    1.33% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    33          14.31          12.00          98.50      2.4348240
+    1.38% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    34          14.31          12.00         101.50      2.5074794
+    1.42% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    35          14.31          12.00         104.50      2.5597813
+    1.46% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    36          14.31          12.00         107.50      2.6217816
+    1.50% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    37          14.31          12.00         110.50      2.7027357
+    1.54% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    38          14.31          12.00         113.50      2.7857449
+    1.58% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    39          14.31          12.00         116.50      2.8821509
+    1.62% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    40          14.31          12.00         119.50      2.9752324
+    1.67% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    41          14.31          12.00         122.50      3.0654125
+    1.71% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    42          14.31          12.00         125.50      3.1447084
+    1.75% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    43          14.31          12.00         128.50      3.2147007
+    1.79% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    44          14.31          12.00         131.50      3.2677500
+    1.83% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    45          14.31          12.00         134.50      3.2641964
+    1.88% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    46          14.31          12.00         137.50      3.2272775
+    1.92% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    47          14.31          12.00         140.50      3.1774781
+    1.96% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    48          14.31          12.00         143.50      3.1190786
+    2.00% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    49          14.31          12.00         146.50      3.0567439
+    2.04% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    50          14.31          12.00         149.50      2.9389699
+    2.08% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    51          14.31          12.00         152.50      2.8425605
+    2.12% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    52          14.31          12.00         155.50      2.7896774
+    2.17% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    53          14.31          12.00         158.50      2.6851797
+    2.21% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    54          14.31          12.00         161.50      2.6396115
+    2.25% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    55          14.31          12.00         164.50      2.6004944
+    2.29% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    56          14.31          12.00         167.50      2.6216457
+    2.33% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    57          14.31          12.00         170.50      2.6008580
+    2.38% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    58          14.31          12.00         173.50      2.6266892
+    2.42% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    59          14.31          12.00         176.50      2.6035352
+    2.46% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    60          14.31          12.00         179.50      2.6299133
+    2.50% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    61          14.31          12.00         182.50      2.6626737
+    2.54% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    62          14.31          12.00         185.50      2.6198938
+    2.58% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    63          14.31          12.00         188.50      2.6414268
+    2.62% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    64          14.31          12.00         191.50      2.5854867
+    2.67% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    65          14.31          12.00         194.50      2.5754654
+    2.71% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    66          14.31          12.00         197.50      2.5978165
+    2.75% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    67          14.31          12.00         200.50      2.6184080
+    2.79% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    68          14.31          12.00         203.50      2.6774337
+    2.83% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    69          14.31          12.00         206.50      2.7351954
+    2.88% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    70          14.31          12.00         209.50      2.7910583
+    2.92% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    71          14.31          12.00         212.50      2.8612471
+    2.96% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    72          14.31          12.00         215.50      2.9606864
+    3.00% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    73          14.31          12.00         218.50      3.0462015
+    3.04% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    74          14.31          12.00         221.50      3.0849276
+    3.08% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    75          14.31          12.00         224.50      3.1225710
+    3.12% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    76          14.31          12.00         227.50      3.1286805
+    3.17% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    77          14.31          12.00         230.50      3.1002772
+    3.21% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    78          14.31          12.00         233.50      3.0564563
+    3.25% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    79          14.31          12.00         236.50      2.9645698
+    3.29% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    80          14.31          12.00         239.50      2.8572521
+    3.33% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    81          14.31          12.00         242.50      2.7759268
+    3.38% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    82          14.31          12.00         245.50      2.6959450
+    3.42% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    83          14.31          12.00         248.50      2.6110952
+    3.46% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    84          14.31          12.00         251.50      2.5363038
+    3.50% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    85          14.31          12.00         254.50      2.4800406
+    3.54% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    86          14.31          12.00         257.50      2.4042330
+    3.58% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    87          14.31          12.00         260.50      2.3708360
+    3.62% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    88          14.31          12.00         263.50      2.3564856
+    3.67% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    89          14.31          12.00         266.50      2.3375483
+    3.71% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    90          14.31          12.00         269.50      2.3541627
+    3.75% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    91          14.31          12.00         272.50      2.3595035
+    3.79% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    92          14.31          12.00         275.50      2.3941252
+    3.83% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    93          14.31          12.00         278.50      2.4286983
+    3.88% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    94          14.31          12.00         281.50      2.4872286
+    3.92% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    95          14.31          12.00         284.50      2.5385947
+    3.96% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    96          14.31          12.00         287.50      2.6074641
+    4.00% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    97          14.31          12.00         290.50      2.6205812
+    4.04% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    98          14.31          12.00         293.50      2.6535366
+    4.08% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+    99          14.31          12.00         296.50      2.6754484
+    4.12% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+   100          14.31          12.00         299.50      2.6938913
+    4.17% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+   101          14.31          12.00         302.50      2.7223585
+    4.21% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+   102          14.31          12.00         305.50      2.7282994
+    4.25% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+   103          14.31          12.00         308.50      2.7520735
+    4.29% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+   104          14.31          12.00         311.50      2.7784526
+    4.33% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+   105          14.31          12.00         314.50      2.7829854
+    4.38% of job   1 of   1 completed.
+
+number           kout          theta            phi      intensity
+   106          14.31          12.00         317.50      2.7784636
+    4.42% of job   1 of   1 completed.

@@ -35,7 +35,7 @@ float Mscdrun::getmemory()
   float xa,xb;
   if (error==0)
   { xa=(float)((2*80+7*100)*sizeof(char)+101*8*sizeof(int)+
-      (14*21+101*20+300*12+npoint*3+nfit*3)*sizeof(float)+
+      (14*21+101*20+1250*12+npoint*3+nfit*3)*sizeof(float)+
       (natoms*natoms*radim*2+radim)*sizeof(Fcomplex));
     xa+=natoms*natoms*sizeof(int);
     if (msorder>1) xa+=natoms*natoms*(natoms+msorder)*sizeof(int);
@@ -314,7 +314,7 @@ int Mscdrun::readparameter()
           { xa-=laxorig[layem*4]; ya-=laxorig[layem*4+1];
           }
           rb=0.0f;
-          if (n>=300) error=602;
+          if (n>=1250) error=602;
           else if (radius>radauto)
             rb=(xa*xa+ya*ya)/(radius*radius)+za*za/(depth*depth);
           else if ((lakatom[k*4+2]>0)&&(ra>0.1))
@@ -365,7 +365,7 @@ int Mscdrun::readparameter()
     }
     natoms=n;
     if ((error==0)&&(natoms<1)) error=601;
-    else if ((error==0)&&(natoms>300)) error=602;
+    else if ((error==0)&&(natoms>1250)) error=602;
     else if ((error==0)&&(sizeint<4)&&(natoms>12)) error=602;
   }
 

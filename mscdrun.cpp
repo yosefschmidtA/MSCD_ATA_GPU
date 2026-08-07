@@ -74,7 +74,7 @@ void Mscdrun::init()
     layfit=new float [101*4]; laxcell=new float [101*4];
     laxorig=new float [101*4]; fitvars=new float [4*20];
     aweight=new float [4]; magamp=new float [4];
-    patom=new float [300*12];
+    patom=new float [1250*12];
     pdintensity=new Pdintensity;
     if ((!username)||(!sysname)||(!finname)||(!foutname)||(!rmfile)||
       (!psfile)||(!lakatom)||(!layatom)||(!fitvars)||(!laycell)||
@@ -91,7 +91,7 @@ void Mscdrun::init()
     layfit=new float [101*4]; laxcell=new float [101*4];
     laxorig=new float [101*4]; fitvars=new float [4*20];
     aweight=new float [4]; magamp=new float [4];
-    patom=new float [300*12];
+    patom=new float [1250*12];
     if ((!username)||(!sysname)||(!finname)||(!foutname)||(!rmfile)||
       (!psfile)||(!lakatom)||(!layatom)||(!fitvars)||(!laycell)||
       (!layorig)||(!layfit)||(!laxcell)||(!laxorig)||(!aweight)||
@@ -170,7 +170,7 @@ int Mscdrun::getlength()
   if (error==0)
   { ka=sizeof(int)+sizeof(Mscdrun)+
       (2*80+7*100)*sizeof(char)+2*101*4*sizeof(int)+
-      (5*101*4+4*20+2*4+300*12)*sizeof(float);
+      (5*101*4+4*20+2*4+1250*12)*sizeof(float);
 
     if (pdnum) ka+=npoint*sizeof(int);
     if (tevenadd) ka+=natoms*natoms*natoms*sizeof(int);
@@ -244,7 +244,7 @@ int Mscdrun::paexport(char *dest,int length)
     if (ka>=0) ka=memorysend(dest,(char *)aweight,ka,kb,length);
     kb=4*sizeof(float);
     if (ka>=0) ka=memorysend(dest,(char *)magamp,ka,kb,length);
-    kb=300*12*sizeof(float);
+    kb=1250*12*sizeof(float);
     if (ka>=0) ka=memorysend(dest,(char *)patom,ka,kb,length);
 
     kb=npoint*sizeof(int);
@@ -384,7 +384,7 @@ int Mscdrun::paimport(char *source,int length)
     if (ka>=0) ka=memoryrec((char *)aweight,source,ka,kb,length);
     kb=4*sizeof(float);
     if (ka>=0) ka=memoryrec((char *)magamp,source,ka,kb,length);
-    kb=300*12*sizeof(float);
+    kb=1250*12*sizeof(float);
     if (ka>=0) ka=memoryrec((char *)patom,source,ka,kb,length);
 
     kb=npoint*sizeof(int);
@@ -558,7 +558,7 @@ int Mscdrun::receivejobs()
 int Mscdrun::getsuplength(int order)
 { int ka;
   if ((error==0)&&(order==1))
-  { ka=sizeof(int)+(3+4*20+300*12)*sizeof(float);
+  { ka=sizeof(int)+(3+4*20+1250*12)*sizeof(float);
     if (pdnum) ka+=npoint*sizeof(int);
     if (tevenpar) ka+=ntrieven*10*sizeof(float);
     if (devenpar) ka+=ndbleven*7*sizeof(float);
@@ -592,7 +592,7 @@ int Mscdrun::pasupexport(char *dest,int length,int order)
       if (ka>=0) ka=memorysend(dest,(char *)&lattice,ka,kb,length);
       kb=4*20*sizeof(float);
       if (ka>=0) ka=memorysend(dest,(char *)fitvars,ka,kb,length);
-      kb=300*12*sizeof(float);
+      kb=1250*12*sizeof(float);
       if (ka>=0) ka=memorysend(dest,(char *)patom,ka,kb,length);
 
       kb=npoint*sizeof(int);
@@ -655,7 +655,7 @@ int Mscdrun::pasupimport(char *source,int length,int order)
       if (ka>=0) ka=memoryrec((char *)&lattice,source,ka,kb,length);
       kb=4*20*sizeof(float);
       if (ka>=0) ka=memoryrec((char *)fitvars,source,ka,kb,length);
-      kb=300*12*sizeof(float);
+      kb=1250*12*sizeof(float);
       if (ka>=0) ka=memoryrec((char *)patom,source,ka,kb,length);
 
       kb=npoint*sizeof(int);

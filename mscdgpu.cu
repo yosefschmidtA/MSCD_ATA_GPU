@@ -622,11 +622,15 @@ __global__ static void k_summation_step(
     }
 }
 
+static float last_akin = -1.0f;
 extern "C" int mscdgpu_summation(float akin, const Gcplx *tevenelem, Gcplx *asum_host, const float *patom)
 {
     if (!g_ready) { snprintf(g_err,sizeof(g_err),"setup nao chamado"); return 1; }
     
-    CK(cudaMemcpy(d_tevenelem, tevenelem, (size_t)g_ntrielem * sizeof(Gcplx), cudaMemcpyHostToDevice));
+    if (akin != last_akin) {
+        CK(cudaMemcpy(d_tevenelem, tevenelem, (size_t)g_ntrielem * sizeof(Gcplx), cudaMemcpyHostToDevice));
+        last_akin = akin;
+    }
     
     dim3 threads_init(16, 8, 8);
     dim3 blocks_init((K.radim + 15)/16, (K.natoms + 7)/8, (K.natoms + 7)/8);
@@ -680,6 +684,7 @@ extern "C" void mscdgpu_teardown(void)
   d_talpha=NULL; d_tgamma=NULL; d_surviving_pairs=NULL;
   d_asum=NULL; d_bsum=NULL; d_tevenelem=NULL;
   
+  last_akin = -1.0f;
   memset(&D,0,sizeof(D)); g_ready=0;
 }
 
