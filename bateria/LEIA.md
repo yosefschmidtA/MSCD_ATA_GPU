@@ -99,3 +99,19 @@ profundidade em 1,5 vez o raio. Contados com o original em 09/10/2026.
 ```bash
 MAQUINA=nome VERSOES=gpu TAMANHOS=centenas ./bateria/bateria.sh
 ```
+
+## Com mais de um processo, o limite é ~500 átomos (ERRO_134)
+
+Com `-np` maior que 1, o processo 0 empacota o job inteiro numa mensagem só
+para mandar aos outros (`Mscdjob::sendjobs`, `mscdjob.cpp:108`). O tamanho
+dela é somado num `int` em `Mscdrun::getlength` (`mscdrun.cpp:168`), e as
+tabelas de trios entram com 16 bytes por trio. Com 508 átomos isso passa de
+2³¹ bytes, o número fica negativo, o `new` lança `std::bad_alloc` e o
+programa aborta com código 134. Reproduzido em 09/10/2026 com 508 átomos e
+`-np 2`, com 11 GB livres para uma rodada de ~7 GB, então não é falta de RAM.
+
+Vale para o original e para a GPU, porque o código é o mesmo. Com 424 átomos
+ainda passa, com 508 já não. Os `ERRO_134` da bateria a partir de ~500 átomos
+com `np>1` são esse limite, e o `np=1` não é afetado. Para passar dele seria
+preciso trocar o `int` por 64 bits na serialização e dividir o `MPI_Send` em
+pedaços menores que 2 GB.
