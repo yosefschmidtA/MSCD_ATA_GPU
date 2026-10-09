@@ -1,0 +1,3 @@
+GPU: U com 6495 de 867692 posicoes, 4579 de 535268 pares distintos
+GPU summation: 921 pares, 4998 trios, 30043 slots, 3 emissores, 3.6 MB de produtos
+GPU: pronta (535268 pares, radim=15, alnum=20, rlnum=20, lamdum=25, betanum=361, halnum=20, handata=101, cmnum=5, nkind=2)

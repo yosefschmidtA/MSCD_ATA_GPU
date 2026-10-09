@@ -1,0 +1,2 @@
+1c1ef76a93f24a44550b775dae22083b  bateria/bin/randmscd_gpu
+87a5845e1de8fbaf3745e58167fa8d5e  bateria/bin/randmscd_original
