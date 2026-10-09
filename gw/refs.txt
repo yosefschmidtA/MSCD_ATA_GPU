@@ -1,0 +1,3 @@
+gw/run.sh: line 13: bc: command not found
+cov refgpu np=1 rc=0 wall=    r-factora =    0.6710   r-factorb =    0.8642
+   r-factora=sum((chic-chie)*(chic-chie))/(sum(chic*chic+chie*chie)

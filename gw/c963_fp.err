@@ -1,0 +1,13 @@
+GPU: U com 7941 de 926406 posicoes, 5205 de 515782 pares distintos
+GPUPROF m=8 pares=315 trios: media 1.5 max 4 | passos por thread: media 1.7 max 8
+GPUPROF m=7 pares=255 trios: media 1.4 max 3 | passos por thread: media 1.4 max 8
+GPUPROF m=6 pares=191 trios: media 1.4 max 3 | passos por thread: media 1.4 max 3
+GPUPROF m=5 pares=179 trios: media 1.4 max 10 | passos por thread: media 1.4 max 10
+GPUPROF m=4 pares=171 trios: media 1.3 max 19 | passos por thread: media 1.4 max 36
+GPUPROF m=3 pares=218 trios: media 2.6 max 25 | passos por thread: media 5.2 max 69
+GPUPROF m=2 pares=414 trios: media 13.7 max 432 | passos por thread: media 76.4 max 4254
+GPU summation: 1743 pares, 7767 trios, 34422 slots, 3 emissores, 3.9 MB de produtos
+GPU: pronta (515782 pares, radim=15, alnum=20, rlnum=20, lamdum=25, betanum=361, halnum=20, handata=101, cmnum=5, nkind=2)
+FINALPROF 2000 chamadas: geometria 0.89 s, simulacao 0.09 s, valores 1.19 s
+GPUPROF 2000 chamadas, ms acumulados por trecho: 7 8 6 7 7 6 7 7 6 7 7 6 7 8 6 7 10 6 25 77 6 121
+GPUPROF allevendetec 2000 chamadas 166 ms

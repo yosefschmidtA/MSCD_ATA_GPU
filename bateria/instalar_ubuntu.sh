@@ -21,6 +21,7 @@
 # da' a mesma saida byte a byte (so' a data e a hora mudam).
 # =====================================================================
 set -eo pipefail
+trap 'echo; echo "ERRO: o script parou na linha $LINENO, no comando: $BASH_COMMAND"' ERR
 cd "$(dirname "$0")/.." || exit 1
 B=bateria
 MAQ=${MAQUINA:-$(hostname -s | tr -cd 'A-Za-z0-9_-' | cut -c1-12)}
@@ -58,13 +59,15 @@ nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
 
 # ---------------------------------------------------------------------
 msg "3/5 CUDA"
-CUDA_MAX=$(nvidia-smi | grep -oP 'CUDA Version: \K[0-9]+\.[0-9]+')
+CUDA_MAX=$(nvidia-smi | grep -oP 'CUDA (UMD )?Version: \K[0-9]+\.[0-9]+' || true)
+[ -n "$CUDA_MAX" ] || erro "nao consegui ler a versao do CUDA no nvidia-smi"
 echo "o driver aceita ate' CUDA $CUDA_MAX"
 achar_cuda() {   # o do repositorio da NVIDIA primeiro, o do Ubuntu (/usr) por ultimo
   local d
   for d in /usr/local/cuda $(ls -d /usr/local/cuda-* 2>/dev/null | sort -V -r) /usr; do
     [ -x "$d/bin/nvcc" ] && { echo "$d"; return; }
   done
+  return 0   # sem isto, nao achar o nvcc derruba o script pelo set -e
 }
 toolkit_nvidia() {   # repositorio da NVIDIA de uma versao do Ubuntu (ex. 2604)
   local url=https://developer.download.nvidia.com/compute/cuda/repos/ubuntu$1/x86_64
@@ -159,7 +162,7 @@ rm -f $B/build/teste.out
 MSCD_GPU=1 mpirun --bind-to none -np 1 $B/bin/randmscd_gpu $B/build/teste.in \
   > $B/build/teste.log 2> $B/build/teste.err \
   || { tail $B/build/teste.err; erro "a GPU terminou com erro"; }
-rf=$(grep -h "r-factora =" $B/build/teste.out | awk '{print $3, $6}')
+rf=$(grep -h "r-factora =" $B/build/teste.out | awk '{print $3, $6}' || true)
 echo "r-factor $rf (no PC de origem 0.6836 0.8648)"
 [ "$rf" != "1.0000 -1.0000" ] \
   || { cat $B/build/teste.err; erro "curva zerada, a GPU falhou no setup"; }

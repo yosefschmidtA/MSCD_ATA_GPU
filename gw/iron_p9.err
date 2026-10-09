@@ -1,0 +1,18 @@
+GPUPROF m=6 pares=430 trios: media 3.9 max 77 | passos por thread: media 7.9 max 332
+GPUPROF m=5 pares=648 trios: media 3.5 max 72 | passos por thread: media 6.3 max 299
+GPUPROF m=4 pares=1151 trios: media 3.4 max 78 | passos por thread: media 5.8 max 253
+GPUPROF m=3 pares=3738 trios: media 4.1 max 166 | passos por thread: media 8.9 max 472
+GPUPROF m=2 pares=1584 trios: media 35.3 max 366 | passos por thread: media 133.4 max 5485
+GPU summation: 7551 pares, 79219 trios, 258797 slots, 7 emissores, 25.8 MB de produtos
+GPU: pronta (40886 pares, radim=15, alnum=20, rlnum=20, lamdum=25, betanum=361, halnum=20, handata=101, cmnum=5, nkind=3)
+GPUPROF 2000 chamadas, ms acumulados por trecho: 120 37 7 24 30 6 28 29 6 87 55 8 750 538 6 110
+GPUPROF allevendetec 2000 chamadas 263 ms
+GPUPROF 4000 chamadas, ms acumulados por trecho: 239 74 14 48 60 11 55 58 12 174 110 16 1491 1072 13 220
+GPUPROF allevendetec 4000 chamadas 520 ms
+GPUPROF 6000 chamadas, ms acumulados por trecho: 358 111 21 71 90 17 83 86 19 260 165 24 2233 1605 19 329
+GPUPROF allevendetec 6000 chamadas 766 ms
+GPUPROF 8000 chamadas, ms acumulados por trecho: 478 148 28 95 120 23 110 115 25 346 220 32 2974 2139 25 439
+GPUPROF allevendetec 8000 chamadas 1028 ms
+GPUPROF 10000 chamadas, ms acumulados por trecho: 596 185 34 119 150 28 137 144 31 432 274 39 3716 2673 31 549
+GPUPROF allevendetec 10000 chamadas 1283 ms
+GPUPROF 12000 chamadas, ms acumulados por trecho: 715 222 41 142 180 34 165 172 37 519 329 47 4457 3207 38 658

@@ -1,0 +1,38 @@
+[timer] -- ate readparameter          0.009 s
+[timer] C indexa natoms^3             1.606 s
+[timer] D estatisticas                0.013 s
+[timer] symtrivert TOTAL              1.619 s
+[timer] symdblvert                    0.807 s
+[timer]   precut vibracionais         0.001 s
+[timer]   precut rotacionais          0.012 s
+[timer]   precut esfericas+cortes     0.109 s
+[timer]   precut alltrievent          1.058 s
+[timer]   precut maximo do pemeven    0.014 s
+[timer]   precut pathcut msorder x natoms^3    0.396 s
+[timer]   precut estatisticas+alocacoes    0.519 s
+[timer] precutable                    2.108 s
+[timer] sendjobs/receivejobs          0.000 s
+[timer]   (antes de maketripar)       0.006 s
+[timer]   maketripar                  0.048 s
+[timer]   makedblpar                  0.000 s
+[timer]   allrotation natoms^3        0.513 s
+[timer]   alltrievent(0) do laco      0.169 s
+GPU summation: 7551 pares, 79219 trios, 258797 slots, 7 emissores, 25.8 MB de produtos
+GPU: pronta (40886 pares, radim=15, alnum=20, rlnum=20, lamdum=25, betanum=361, halnum=20, handata=101, cmnum=5, nkind=3)
+[hist] visitas potenciais (m,ia,ib,ic) 198124950
+[hist]   podados por tevencut (par ia,ib) 195353733  98.60%
+[hist]   podados por evedim<1 ou ic==ib   2691998   1.36%
+[hist]   evedim= 1         14740 trios   0.01% das visitas         14740 MACs
+[hist]   evedim= 3         53205 trios   0.03% das visitas        478845 MACs
+[hist]   evedim= 6          7732 trios   0.00% das visitas        278352 MACs
+[hist]   evedim=10          3016 trios   0.00% das visitas        301600 MACs
+[hist]   evedim=15           526 trios   0.00% das visitas        118350 MACs
+[acc rank 0] dentro do laco dos pontos  soma dos trechos   13.210 s
+[acc rank 0]   thetainside                       0.005 s    0.04%      12000 chamadas
+[acc rank 0]   alldblevent                       1.023 s    7.74%      12000 chamadas
+[acc rank 0]   allevendetec                      2.568 s   19.44%      12000 chamadas
+[acc rank 0]   summation: laco de m (gpu)        0.313 s    2.37%      12000 chamadas
+[acc rank 0]   summation: bloco final (onevenemit)    3.846 s   29.12%      12000 chamadas
+[acc rank 0]   summation: espera da placa        4.414 s   33.42%      12000 chamadas
+[acc rank 0]   summation: somas finais           1.039 s    7.87%      12000 chamadas
+[timer] laco dos 779 pontos          14.055 s

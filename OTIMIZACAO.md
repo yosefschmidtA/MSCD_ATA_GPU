@@ -6,7 +6,32 @@ profundidade 20, 247 átomos.
 
 ---
 
-## COMO CONTINUAR (estado em 05/08/2026, fim da sessão)
+## COMO CONTINUAR (estado em 09/10/2026)
+
+**Leia primeiro as seções "Fase 5" e "Fase 6, varredura", no fim deste
+arquivo.** Elas substituem o que vem logo abaixo, que é de 05/08/2026 e fica
+como registro.
+
+- **Produção.** `MSCD_GPU=1 mpirun -np 1 ./randmscd_gpu Cov0.txt`. Com
+  `-np 1` o processo usa todos os núcleos por OpenMP e a placa sem disputa.
+  Medido em 09/10/2026, ferro 9,7 s com `-np 1`, 11,9 s com 4 e 13,3 s com 6, e
+  a memória por processo dobra com mais de um. O resultado é bit a bit igual em
+  qualquer `-np`. Nesta máquina o `~/.prte/mca-params.conf` dispensa o
+  `--bind-to none` (ver `CLAUDE.md`).
+- **Executável original.** O `baseline/randmscd_parallel.baseline` não roda
+  mais (pede `libmpi_cxx.so.40`). O mesmo código, do commit `d4c8408`, foi
+  recompilado em `gw/v0/orig/` (exato, limite de 300 átomos) e `gw/v0/1250/`
+  (só o limite de átomos aumentado). Os dois saem bit a bit iguais à
+  referência de CPU no `Cov0.txt` de 247 átomos.
+- **Em andamento.** A bateria de desempenho `bateria/bateria.sh` (original
+  contra GPU, 135 a 1112 átomos, `-np` de 1 a 12, até 10 h por rodada, com
+  pausa e retomada). Resultados em `bateria/resultados.csv`. Ver
+  `bateria/LEIA.md`.
+- **Próximo passo possível.** A mesma bateria na omicron com 2 dias por rodada
+  (`TEMPO_MAX=172800`), recompilando lá com `g++-11` e Intel MPI. Sem GPU lá,
+  então seria original contra a versão atual em CPU.
+
+## COMO CONTINUAR (estado em 05/08/2026, fim da sessão, registro)
 
 ### Onde o código está
 
@@ -1480,3 +1505,25 @@ milhões de trios, limitada por conta), `pathcut` 2,4 s (subida de 3,6 GB e
 leituras aleatórias no kernel), `alltrievent` 1,3 a 1,6 s e o laço 5,1 s (o
 bloco final na CPU, com geometria em `double`). Nenhum é busca linear. A
 memória de pico é ~8 GB, dominada por `tevenadd` e `tevendim` (3,6 GB cada).
+
+### Depois da varredura (09/10/2026)
+
+- **Número de processos com a GPU.** Medido com o binário final, todos bit a
+  bit iguais.
+
+  | | `-np 1` | `-np 4` | `-np 6` |
+  |---|---:|---:|---:|
+  | `Cov0.txt` (247 átomos) | 3,8 s | 4,0 s | 4,8 s |
+  | ferro (367 átomos) | 9,7 s | 11,9 s | 13,3 s |
+  | memória por processo, ferro | 0,9 GB | 1,9 GB | 1,9 GB |
+
+  Com mais processos o preparo continua todo no processo 0, as tabelas são
+  copiadas para cada processo e as economias de memória da Fase 6 que só valem
+  com um processo ficam desligadas. Com 963 átomos, `-np 4` não caberia na RAM.
+- **O original no ferro não sai do Reanalyzing em tempo razoável.** Com
+  `-np 12` ele passou mais de 6 minutos no Analyzing/Reanalyzing, com o
+  processo 0 trabalhando e os outros 11 em espera, e foi interrompido. Foi o
+  que levou a bateria a usar o `Cov0.txt` com raio crescente em vez do ferro.
+- **Calibração da bateria.** Original com 135 átomos, 34,5 s em `-np 1` e
+  19,7 s em `-np 2`. GPU, 2,8 s. O R-factor é o mesmo (0,6836 e 0,8648) e a
+  curva bate no piso de ruído (`max|Δχ| = 1,0×10⁻⁵`).

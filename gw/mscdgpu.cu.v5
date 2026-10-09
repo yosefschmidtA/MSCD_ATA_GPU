@@ -1,0 +1,1011 @@
+/*
+----------------------------------------------------------------------
+  Port de GPU do MSCD -- Fase 1: alldblevent / evenelem (57% do laco).
+  Ver PLANO_CUDA.md. Interface em mscdgpu.h.
+
+  A ARITMETICA E' COPIA FIEL DA CPU, na mesma ordem de operacoes.
+  Nao e' preciosismo: enquanto o kernel bate bit a bit com o
+  mscdrunc.cpp, qualquer divergencia nas fases seguintes tem uma causa
+  so'. Otimizar a ordem (fatorar cxb*cxc para fora do laco de ma, por
+  exemplo) economiza ~metade das multiplicacoes complexas e pode ser
+  feito depois -- mas ai a validacao vira "dentro de 1e-4" e para de
+  apontar o dedo para o culpado.
+
+  Onde a CPU calcula em double e arredonda para float (sqrt, atan2,
+  acos, cos, sin, exp -- todos vem de <math.h> com argumento promovido),
+  o device tambem usa double. FP64 e' 1/64 nesta placa, mas sao ~6
+  chamadas por par contra ~5400 flops float: medido irrelevante, e e' o
+  que mantem o beta discreto igual ao da CPU. Ver "O risco do beta".
+----------------------------------------------------------------------
+*/
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <math.h>
+#include <cuda_runtime.h>
+#include "mscdgpu.h"
+
+/* Escrito exatamente como nas funcoes da CPU. NAO substituir por um literal
+   float: radian divide ka, que chega a ~14000 graus, e o resultado vira
+   INDICE de cexpix em fexpix -- 1 ulp aqui pula uma entrada da tabela. Os
+   dois compiladores fazem 3.14159265/180.0 no mesmo double IEEE e arredondam
+   para float do mesmo jeito, entao a constante e' bit a bit a mesma. */
+#define RADIANF ((float)(3.14159265/180.0))
+
+static char g_err[512]={0};
+static int  g_ready=0;
+static int  g_dbg=0;   /* so' o modo validate liga: sao 650 KB por ponto */
+
+#define CK(call) do { cudaError_t e_=(call); if (e_!=cudaSuccess) { \
+  snprintf(g_err,sizeof(g_err),"%s:%d %s: %s",__FILE__,__LINE__,#call, \
+    cudaGetErrorString(e_)); return 1; } } while (0)
+
+/* ---- aritmetica complexa, mesma semantica de fcomplex.h ---- */
+__host__ __device__ static inline Gcplx cmul(Gcplx a,Gcplx b)
+{ Gcplx r; r.re=a.re*b.re-a.im*b.im; r.im=a.re*b.im+a.im*b.re; return r; }
+__host__ __device__ static inline Gcplx csmul(float s,Gcplx a)
+{ Gcplx r; r.re=s*a.re; r.im=s*a.im; return r; }
+__host__ __device__ static inline Gcplx cadd(Gcplx a,Gcplx b)
+{ Gcplx r; r.re=a.re+b.re; r.im=a.im+b.im; return r; }
+__host__ __device__ static inline Gcplx cneg(Gcplx a)
+{ Gcplx r; r.re=-a.re; r.im=-a.im; return r; }
+
+/* ---- estado do device ---- */
+typedef struct
+{ float *patom,*devenpar,*rotmata,*rotmatc,*thermat,*aweight;
+  Gcplx *hankmat_a,*hankarg_b,*phasec,*cexpix;
+  float *pairgeo;          /* 3 floats por par: cosa,sina,phia */
+  int   *pairkind;         /* akind-1 */
+  Gcplx *devenelem;
+  Gcplx *devendetec;
+  const int *devenadd;
+  int   *alnum;            /* por especie */
+  float *dbg;
+} Dev;
+
+static Dev D;
+static Gconst K;
+
+/* Os cinco ma usados por alldblevent sao 0..4 e, com mb=0,
+   getkelem(ma,0)==getkharm(ma,0)==ma*(ma+1) -- sempre >=0, entao o ramo
+   de sinal de rotharma (kelem<0) nunca dispara aqui. */
+__constant__ int c_kel[5]={0,2,6,12,20};
+
+/* As 15 saidas vem de 9 evenelem distintos: (ma,na) e qual multiplicador
+   complexo (cxa..cxi) cada saida usa. Tabela em mscdrunc.cpp:815-895. */
+__constant__ int c_ma[9] ={0,1,0,2,1,3,0,2,4};
+__constant__ int c_na[9] ={0,0,1,0,1,0,2,1,0};
+
+/* ---------------- Expix::fexpix (msfuncs.cpp:306) ---------------- */
+__device__ static inline Gcplx d_fexpix(const Gcplx *cexpix,int ndata,
+  int mdata,float xa)
+{ int k;
+  /* A reducao e' por subtracao repetida, nao fmodf: ka/radian chega a
+     ~14000 graus e as ~39 subtracoes em float nao dao o mesmo resultado
+     que um resto exato. Trocar isto muda o indice k. */
+  /* As comparacoes sao em float de proposito: 180 e' exato nos dois tipos e
+     float->double e' exato, entao xa>180.0f decide igual a xa>180.0 -- mas
+     sem FP64, que e' 1/64 nesta placa. O indice abaixo FICA em double:
+     ali o arredondamento intermediario mudaria k. */
+  while (xa>180.0f) xa-=360.0f;
+  while (xa<-180.0f) xa+=360.0f;
+  k=(int)(mdata+(ndata-1.0)*xa/360.0+0.5);
+  if (k<0) k=0; else if (k>ndata-1) k=ndata-1;
+  return cexpix[k];
+}
+
+/* ------------- Vibration::fvibmsrd (vibrate.cpp:149) ------------- */
+__device__ static inline float d_fvibmsrd(const float *thermat,int thernum,
+  float therstep,float mweight,float tdebye,float tsample,
+  float bondlength,float aweight)
+{ int i; float y,value;
+  if (bondlength<1.0/therstep/thernum) y=thernum-2.0f;
+  else y=1.0f/bondlength/therstep;
+  if (y<0.0) y=0.0f; else if (y>thernum-2.0) y=thernum-2.0f;
+  i=(int)y;
+  if ((mweight>0.1)&&(aweight>0.1)&&(tdebye>0.1)&&(tsample>0.1))
+  { value=thermat[i]+(y-(float)i)*(thermat[i+1]-thermat[i]);
+    value=value*(float)sqrt((double)(mweight/aweight));
+  }
+  else value=0.0f;
+  return value;
+}
+
+/* ---- precomputo da perna (ia->ib), constante em todos os pontos ----
+   Em alldblevent o terceiro ponto e' patom[ib]+xdetec, entao o vetor
+   (patomc-patomb) E' xdetec: igual para todos os pares num ponto. So' a
+   perna (patomb-patoma) varia por par, e ela nao depende do detector.
+   O onerotation da CPU refaz este sqrt/atan2 779 vezes por par. */
+__global__ static void k_pairgeo(const float *patom,const float *devenpar,
+  int ndbleven,float *pairgeo,int *pairkind)
+{ int j=blockIdx.x*blockDim.x+threadIdx.x;
+  if (j>=ndbleven) return;
+  int ia=(int)devenpar[j*7+5], ib=(int)devenpar[j*7+6];
+  float xa=patom[ib*12]-patom[ia*12];
+  float ya=patom[ib*12+1]-patom[ia*12+1];
+  float za=patom[ib*12+2]-patom[ia*12+2];
+  float lenga=(float)sqrt((double)(xa*xa+ya*ya+za*za));
+  float cosa=za/lenga, sina, phia;
+  if (fabs((double)xa)+fabs((double)ya)<1.0e-5) phia=0.0f;
+  else phia=(float)atan2((double)ya,(double)xa);
+  /* mscdrunc.cpp:694 e' sqrt(1.0-cosa*cosa): cosa*cosa e' FLOAT, so' a
+     subtracao promove. Calcular o quadrado em double muda zc no 8o digito,
+     e como beta=acos(zc) vira indice inteiro de rotmata -- com derivada
+     1/sqrt(1-zc^2), que explode perto de zc=+-1 -- isso vira erro de 1 grau.
+     Foi exatamente este bug na primeira versao: maxrel 7,25. */
+  if (fabs((double)cosa)>=1.0) sina=0.0f;
+  else sina=(float)sqrt(1.0-(double)(cosa*cosa));
+  pairgeo[j*3]=cosa; pairgeo[j*3+1]=sina; pairgeo[j*3+2]=phia;
+  pairkind[j]=(int)devenpar[j*7+4]-1;
+}
+
+/* --------------------------- o kernel --------------------------- */
+struct Kargs
+{ const float *devenpar,*pairgeo,*rotmata,*rotmatc,*thermat,*aweight;
+  const Gcplx *hankmat_a,*hankarg_b,*phasec,*cexpix;
+  const int *pairkind,*alnum;
+  Gcplx *out;
+  float *dbg;              /* 4 por par: beta,gamma,xb,row -- so' depuracao */
+  int ndbleven,rlnum,lamdum,betanum,handata,halnum,hacmnum,pclnum;
+  int exndata,exmdata,thernum,radim,raorder;
+  float therstep,mweight,tdebye,tsample;
+  float akin,xc,cosb,sinb,phib;
+};
+
+__global__ static void k_alldblevent(Kargs a)
+{ int j=blockIdx.x*blockDim.x+threadIdx.x;
+  if (j>=a.ndbleven) return;
+
+  /* --- onerotation (mscdrunc.cpp:672), so' beta e gamma: alpha nao e'
+     consumido por alldblevent, entao os dois atan2 dele saem. --- */
+  float cosa=a.pairgeo[j*3], sina=a.pairgeo[j*3+1], phia=a.pairgeo[j*3+2];
+  float cosb=a.cosb, sinb=a.sinb;
+  float phiab=phia-a.phib;
+  float cosphi=(float)cos((double)phiab), sinphi=(float)sin((double)phiab);
+  float xd_=sinb*cosa*cosphi-cosb*sina, yd_=sinb*sinphi;
+  float zc=cosb*cosa+sinb*sina*cosphi;
+  float beta,gamma;
+  if ((zc>0.99999)&&(cosb>=0.0))      { beta=0.0f;   gamma=0.0f; }
+  else if (zc>0.99999)                { beta=0.0f;   gamma=0.0f; }
+  else if ((zc<-0.99999)&&(cosb>=0.0)){ beta=180.0f; gamma=0.0f; }
+  else if (zc<-0.99999)               { beta=180.0f; gamma=0.0f; }
+  else
+  { beta=(float)acos((double)zc)/RADIANF;
+    if (fabs((double)xd_)+fabs((double)yd_)<1.0e-5) gamma=0.0f;
+    else gamma=(float)atan2((double)yd_,(double)xd_)/RADIANF;
+  }
+  while (gamma>180.0) gamma-=360.0f;
+  while (gamma<-180.0) gamma+=360.0f;
+
+  /* O beta vira INDICE DISCRETO de rotmata (linha 2*beta) -- por isso o
+     acos e' em double: 1 ulp aqui e' 1 grau la'. Ver "O risco do beta". */
+  beta=(float)floor(((double)beta*10.0+0.5)/10.0);
+
+  float dist=a.devenpar[j*7+3];
+  int   kind=a.pairkind[j];
+  float ka=a.akin*dist;
+  float cosbeta=(float)cos((double)(beta*RADIANF));
+  float xdv=d_fvibmsrd(a.thermat,a.thernum,a.therstep,a.mweight,a.tdebye,
+    a.tsample,dist,a.aweight[kind]);
+  /* mscdrunc.cpp:795 e' akin*akin*xd*(1.0-cosbeta): a associacao a' esquerda
+     faz akin*akin*xd ser calculado em FLOAT e so' o ultimo fator promover
+     para double. Fazer tudo em double aqui daria outro ultimo bit. */
+  float w=a.akin*a.akin*xdv;
+  float xb=(float)exp(-0.5*(double)dist*(double)a.xc
+    -(double)w*(1.0-(double)cosbeta))/ka;
+
+  float t=ka/RADIANF;
+  Gcplx cxa=csmul(xb,d_fexpix(a.cexpix,a.exndata,a.exmdata,t));
+  Gcplx cxb_,cxc_,cxd_,cxe_,cxf_,cxg_,cxh_,cxi_;
+  cxb_=csmul(xb,d_fexpix(a.cexpix,a.exndata,a.exmdata,t-gamma));
+  cxc_=csmul(xb,d_fexpix(a.cexpix,a.exndata,a.exmdata,t+gamma));
+  cxd_=csmul(xb,d_fexpix(a.cexpix,a.exndata,a.exmdata,t-gamma-gamma));
+  cxe_=csmul(xb,d_fexpix(a.cexpix,a.exndata,a.exmdata,t+gamma+gamma));
+  cxf_=csmul(xb,d_fexpix(a.cexpix,a.exndata,a.exmdata,t-gamma-gamma-gamma));
+  cxg_=csmul(xb,d_fexpix(a.cexpix,a.exndata,a.exmdata,t+gamma+gamma+gamma));
+  cxh_=csmul(xb,d_fexpix(a.cexpix,a.exndata,a.exmdata,
+    t-gamma-gamma-gamma-gamma));
+  cxi_=csmul(xb,d_fexpix(a.cexpix,a.exndata,a.exmdata,
+    t+gamma+gamma+gamma+gamma));
+
+  float vka;
+  if (a.raorder<0) vka=0.0f; else vka=1.0f/ka;
+
+  /* Linha de rotmata. V6 mostrou que beta e' inteiro aqui em 30.726.810 de
+     30.726.810 chamadas, entao a interpolacao de makerotation e' copia de
+     linha e da' para indexar direto.
+     UNICA divergencia conhecida com a CPU: em beta=180 a CPU satura i em 359
+     e calcula a+1,0*(b-a), que nao e' bit a bit b; aqui le-se a linha 360
+     direto. Sao 346 pares em 30,7 milhoes, e o valor certo e' o daqui. */
+  int row=(int)((double)fabs((double)beta)*(a.betanum-1.0)/180.0);
+  if (row<0) row=0; else if (row>a.betanum-1) row=a.betanum-1;
+  const float *rota=a.rotmata+(size_t)row*a.rlnum*a.lamdum;
+
+  /* hanka: vka varia por par, entao a interpolacao de 2 pontos de hankmat
+     e' feita inline -- o cache de 100 complexos de fhankelfaca existe na
+     CPU so' para amortizar as 15 chamadas, e aqui nao paga o espaco. */
+  float ya=(float)(4.0*(a.handata-1.0)*(double)vka);
+  int hi=(int)ya;
+  if (hi<0) hi=0; else if (hi>a.handata-2) hi=a.handata-2;
+  float hf=ya-(float)hi;
+  const Gcplx *hrow=a.hankmat_a+(size_t)hi*a.halnum*a.hacmnum;
+  const Gcplx *hnxt=hrow+(size_t)a.halnum*a.hacmnum;
+
+  const Gcplx *phc=a.phasec+(size_t)kind*(a.pclnum+1);
+  /* rotharma devolve 0 para al>=lnum, entao as parcelas alem das tabelas
+     somam zero na CPU. Cortar o laco da' o mesmo resultado e evita ler fora
+     de hankmat, que fhankelfaca nao protege. Com lnum=20 nada muda. */
+  int alnum=a.alnum[kind];
+  if (alnum>a.rlnum) alnum=a.rlnum;
+  if (alnum>a.halnum) alnum=a.halnum;
+
+  Gcplx acc[9];
+  for (int e=0;e<9;++e) { acc[e].re=0.0f; acc[e].im=0.0f; }
+
+  for (int al=0;al<alnum;++al)
+  { Gcplx cpb=phc[al+1];                       /* fsinexpa: akin constante */
+    Gcplx hb=a.hankarg_b[al*a.hacmnum];        /* kb==0 em todas as 15 */
+    Gcplx ha[3];
+    for (int m=0;m<3;++m)
+    { Gcplx p=hrow[al*a.hacmnum+m], q=hnxt[al*a.hacmnum+m];
+      ha[m].re=p.re+hf*(q.re-p.re);
+      ha[m].im=p.im+hf*(q.im-p.im);
+    }
+    for (int e=0;e<9;++e)
+    { int kel=c_kel[c_ma[e]];
+      float rot=rota[al*a.lamdum+kel]*a.rotmatc[al*a.lamdum+kel];
+      /* mesma ordem da CPU: ((xa*cxb)*cxc)*cxd */
+      Gcplx v=cmul(cmul(csmul(rot,cpb),hb),ha[c_na[e]]);
+      acc[e]=cadd(acc[e],v);
+    }
+  }
+
+  if (a.dbg)
+  { a.dbg[j*4]=beta; a.dbg[j*4+1]=gamma; a.dbg[j*4+2]=xb;
+    a.dbg[j*4+3]=(float)row;
+  }
+
+  /* radim encolhe com raorder (mscdruna.cpp:472): 15/10/6/3/1 para 4/3/2/1/0.
+     Os guardas sao os mesmos de mscdrunc.cpp:824-895 -- sem eles, qualquer
+     raorder<4 escreveria fora de devenelem. */
+  Gcplx *o=a.out+(size_t)j*a.radim;
+  o[0] =cmul(cxa,acc[0]);
+  if (a.raorder>0)
+  { o[1] =cmul(cxb_,acc[1]);   o[2] =cmul(cneg(cxc_),acc[1]);
+  }
+  if (a.raorder>1)
+  { o[3] =cmul(cxa,acc[2]);
+    o[4] =cmul(cxd_,acc[3]);   o[5] =cmul(cxe_,acc[3]);
+  }
+  if (a.raorder>2)
+  { o[6] =cmul(cxb_,acc[4]);   o[7] =cmul(cneg(cxc_),acc[4]);
+    o[8] =cmul(cxf_,acc[5]);   o[9] =cmul(cneg(cxg_),acc[5]);
+  }
+  if (a.raorder>3)
+  { o[10]=cmul(cxa,acc[6]);
+    o[11]=cmul(cxd_,acc[7]);   o[12]=cmul(cxe_,acc[7]);
+    o[13]=cmul(cxh_,acc[8]);   o[14]=cmul(cxi_,acc[8]);
+  }
+}
+
+/* ------------------------- lado do host ------------------------- */
+
+static int upf(float **d,const float *h,size_t n)
+{ CK(cudaMalloc((void**)d,n*sizeof(float)));
+  CK(cudaMemcpy(*d,h,n*sizeof(float),cudaMemcpyHostToDevice)); return 0; }
+static int upc(Gcplx **d,const Gcplx *h,size_t n)
+{ CK(cudaMalloc((void**)d,n*sizeof(Gcplx)));
+  CK(cudaMemcpy(*d,h,n*sizeof(Gcplx),cudaMemcpyHostToDevice)); return 0; }
+static int upi(const int **d,const int *h,size_t n)
+{ CK(cudaMalloc((void**)d,n*sizeof(int)));
+  CK(cudaMemcpy(*(void**)d,h,n*sizeof(int),cudaMemcpyHostToDevice)); return 0; }
+
+extern "C" int mscdgpu_setup(const Gconst *k)
+{ if (g_ready) return 0;
+  K=*k; memset(&D,0,sizeof(D));
+
+  if (upf(&D.patom,k->patom,(size_t)k->natoms*12)) return 1;
+  if (upf(&D.devenpar,k->devenpar,(size_t)k->ndbleven*7)) return 1;
+  if (upi(&D.devenadd,k->devenadd,(size_t)k->natoms*k->natoms)) return 1;
+  if (upf(&D.rotmata,k->rotmata,
+      (size_t)k->betanum*k->rlnum*k->lamdum)) return 1;
+  if (upf(&D.rotmatc,k->rotmatc,(size_t)k->rlnum*k->lamdum)) return 1;
+  if (upf(&D.thermat,k->thermat,(size_t)k->thernum)) return 1;
+  if (upf(&D.aweight,k->aweight,(size_t)k->nkind)) return 1;
+  if (upc(&D.hankmat_a,k->hankmat_a,
+      (size_t)k->handata*k->halnum*k->hacmnum)) return 1;
+  if (upc(&D.hankarg_b,k->hankarg_b,
+      (size_t)k->halnum*k->hacmnum)) return 1;
+  if (upc(&D.phasec,k->phasec,(size_t)k->nkind*(k->pclnum+1))) return 1;
+  if (upc(&D.cexpix,k->cexpix,(size_t)k->exndata)) return 1;
+
+  CK(cudaMalloc((void**)&D.pairgeo,(size_t)k->ndbleven*3*sizeof(float)));
+  CK(cudaMalloc((void**)&D.pairkind,(size_t)k->ndbleven*sizeof(int)));
+  CK(cudaMalloc((void**)&D.devenelem,
+    (size_t)k->ndbleven*k->radim*sizeof(Gcplx)));
+  CK(cudaMalloc((void**)&D.devendetec,
+    (size_t)k->natoms*k->natoms*k->radim*sizeof(Gcplx)));
+  CK(cudaMalloc((void**)&D.alnum,(size_t)k->nkind*sizeof(int)));
+  CK(cudaMalloc((void**)&D.dbg,(size_t)k->ndbleven*4*sizeof(float)));
+
+  int nb=(k->ndbleven+255)/256;
+  k_pairgeo<<<nb,256>>>(D.patom,D.devenpar,k->ndbleven,D.pairgeo,D.pairkind);
+  CK(cudaGetLastError());
+  CK(cudaDeviceSynchronize());
+  g_ready=1; return 0;
+}
+
+extern "C" int mscdgpu_set_alnum(const int *alnum,int nkind)
+{ CK(cudaMemcpy(D.alnum,alnum,(size_t)nkind*sizeof(int),
+    cudaMemcpyHostToDevice)); return 0; }
+
+/* hankb e' refotografado a cada ponto porque o cache de fhankelfaca e'
+   keyed no argumento e outras funcoes do laco mexem nele. 100 complexos. */
+extern "C" int mscdgpu_set_hankb(const Gcplx *h)
+{ CK(cudaMemcpy(D.hankarg_b,h,(size_t)K.halnum*K.hacmnum*sizeof(Gcplx),
+    cudaMemcpyHostToDevice)); return 0; }
+
+extern "C" int mscdgpu_alldblevent(float akin,const float *xdetec,float xc)
+{ Kargs a;
+  if (!g_ready) { snprintf(g_err,sizeof(g_err),"setup nao chamado"); return 1; }
+
+  /* (patomc-patomb) == xdetec para todos os pares: uma vez por ponto. */
+  float xb=xdetec[0],yb=xdetec[1],zb=xdetec[2];
+  double lengb=sqrt((double)(xb*xb+yb*yb+zb*zb));
+  if (lengb<1.0e-5) { snprintf(g_err,sizeof(g_err),"lengb=0"); return 1; }
+  float cosb=(float)(zb/lengb),sinb,phib;
+  if (fabs((double)xb)+fabs((double)yb)<1.0e-5) phib=0.0f;
+  else phib=(float)atan2((double)yb,(double)xb);
+  if (fabs((double)cosb)>=1.0) sinb=0.0f;
+  else sinb=(float)sqrt(1.0-(double)(cosb*cosb));   /* float, ver k_pairgeo */
+
+  a.devenpar=D.devenpar; a.pairgeo=D.pairgeo; a.rotmata=D.rotmata;
+  a.rotmatc=D.rotmatc;   a.thermat=D.thermat; a.aweight=D.aweight;
+  a.hankmat_a=D.hankmat_a; a.hankarg_b=D.hankarg_b; a.phasec=D.phasec;
+  a.cexpix=D.cexpix; a.pairkind=D.pairkind; a.alnum=D.alnum;
+  a.out=D.devenelem;
+  a.ndbleven=K.ndbleven; a.rlnum=K.rlnum; a.lamdum=K.lamdum;
+  a.betanum=K.betanum;   a.handata=K.handata; a.halnum=K.halnum;
+  a.hacmnum=K.hacmnum;   a.pclnum=K.pclnum;
+  a.exndata=K.exndata;   a.exmdata=K.exmdata; a.thernum=K.thernum;
+  a.radim=K.radim;       a.raorder=K.raorder;
+  a.therstep=K.therstep; a.mweight=K.mweight; a.tdebye=K.tdebye;
+  a.tsample=K.tsample;
+  a.akin=akin; a.xc=xc; a.cosb=cosb; a.sinb=sinb; a.phib=phib;
+  a.dbg=g_dbg?D.dbg:NULL;
+
+  int nb=(K.ndbleven+127)/128;
+  k_alldblevent<<<nb,128>>>(a);
+  CK(cudaGetLastError());
+  return 0;
+}
+
+extern "C" int mscdgpu_get_devenelem(Gcplx *out)
+{ CK(cudaMemcpy(out,D.devenelem,
+    (size_t)K.ndbleven*K.radim*sizeof(Gcplx),cudaMemcpyDeviceToHost));
+  return 0; 
+}
+
+__global__ static void k_allevendetec(float akin, float xd, float yd, float zd, float cosd, float xc, int msorder, int natoms, int radim, const float *patom, const int *devenadd, const Gcplx *cexpix, int exndata, int exmdata, const Gcplx *devenelem, Gcplx *devendetec)
+{
+  int ib = blockIdx.x * blockDim.x + threadIdx.x;
+  int ia = blockIdx.y;
+  if (ia >= natoms || ib >= natoms || ia == ib) return;
+
+  float emiter = patom[ia * 12 + 7];
+  if (msorder == 1 && emiter == 0.0f) return;
+
+  float xb = patom[ib * 12];
+  float yb = patom[ib * 12 + 1];
+  float zb = patom[ib * 12 + 2];
+
+  float ka = -akin * (xb * xd + yb * yd + zb * zd);
+  float xa = (float)exp(0.5 * (double)xc * (double)zb / (double)cosd);
+  float t = ka / RADIANF;
+  Gcplx cxa = csmul(xa, d_fexpix(cexpix, exndata, exmdata, t));
+
+  int k = devenadd[ia * natoms + ib];
+  for (int j = 0; j < radim; ++j) {
+    devendetec[ia * natoms * radim + ib * radim + j] = cmul(devenelem[k * radim + j], cxa);
+  }
+}
+
+/* 08/10/2026: o fator cxa de allevendetec so' depende de ib (exp usa zb,
+   ka usa a posicao de ib), e o kernel antigo o recalculava para cada um dos
+   natoms valores de ia -- com um exp em double, que e' 1/64 nesta placa.
+   Agora: um kernel calcula os natoms cxa, outro aplica, uma thread por
+   (ia,ib,j). Cada valor passa pelas mesmas operacoes de antes. */
+static Gcplx *d_cxa = NULL;
+__global__ static void k_evendetec_cxa(float akin, float xd, float yd, float zd, float cosd, float xc, int natoms, const float *patom, const Gcplx *cexpix, int exndata, int exmdata, Gcplx *cxaout)
+{
+  int ib = blockIdx.x * blockDim.x + threadIdx.x;
+  if (ib >= natoms) return;
+  float xb = patom[ib * 12];
+  float yb = patom[ib * 12 + 1];
+  float zb = patom[ib * 12 + 2];
+  float ka = -akin * (xb * xd + yb * yd + zb * zd);
+  float xa = (float)exp(0.5 * (double)xc * (double)zb / (double)cosd);
+  float t = ka / RADIANF;
+  cxaout[ib] = csmul(xa, d_fexpix(cexpix, exndata, exmdata, t));
+}
+
+__global__ static void k_evendetec_apply(int msorder, int natoms, int radim, const float *patom, const int *devenadd, const Gcplx *cxa, const Gcplx *devenelem, Gcplx *devendetec)
+{
+  int ia = blockIdx.y;
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= natoms * radim) return;
+  int ib = i / radim, j = i - ib * radim;
+  if (ia == ib) return;
+  if (msorder == 1 && patom[ia * 12 + 7] == 0.0f) return;
+  int k = devenadd[ia * natoms + ib];
+  devendetec[ia * natoms * radim + i] = cmul(devenelem[k * radim + j], cxa[ib]);
+}
+
+extern "C" int mscdgpu_allevendetec(float akin, const float *xdetec, float xc, Gcplx *devendetec_out)
+{
+  if (!g_ready) { snprintf(g_err,sizeof(g_err),"setup nao chamado"); return 1; }
+  float xd=xdetec[0], yd=xdetec[1], zd=xdetec[2], cosd=xdetec[2];
+  if (cosd < 1.0e-5f || cosd > 1.001f) { snprintf(g_err,sizeof(g_err),"cosd fora"); return 901; }
+  
+  static int aprof = -1; static cudaEvent_t ae0, ae1; static double aacc = 0.0; static int acalls = 0;
+  if (aprof < 0) { aprof = getenv("MSCD_GPUPROF") ? 1 : 0; if (aprof) { cudaEventCreate(&ae0); cudaEventCreate(&ae1); } }
+  if (aprof && acalls > 0) { float ms; cudaEventSynchronize(ae1); cudaEventElapsedTime(&ms, ae0, ae1); aacc += ms;
+    if (acalls % 2000 == 0) fprintf(stderr, "GPUPROF allevendetec %d chamadas %.0f ms\n", acalls, aacc); }
+  if (aprof) cudaEventRecord(ae0);
+  if (!d_cxa) CK(cudaMalloc((void**)&d_cxa, (size_t)K.natoms * sizeof(Gcplx)));
+  k_evendetec_cxa<<<(K.natoms + 127) / 128, 128>>>(akin, xd, yd, zd, cosd, xc, K.natoms, D.patom, D.cexpix, K.exndata, K.exmdata, d_cxa);
+  CK(cudaGetLastError());
+  dim3 blocks((K.natoms * K.radim + 255) / 256, K.natoms);
+  k_evendetec_apply<<<blocks, 256>>>(K.msorder, K.natoms, K.radim, D.patom, D.devenadd, d_cxa, D.devenelem, D.devendetec);
+  CK(cudaGetLastError());
+  if (aprof) { cudaEventRecord(ae1); ++acalls; }
+  
+  if (devendetec_out) {
+    CK(cudaMemcpy(devendetec_out, D.devendetec, (size_t)K.natoms * K.natoms * K.radim * sizeof(Gcplx), cudaMemcpyDeviceToHost));
+  }
+  return 0;
+}
+
+extern "C" void mscdgpu_set_dbg(int on) { g_dbg=on; }
+
+extern "C" int mscdgpu_get_dbg(float *out)
+{ CK(cudaMemcpy(out,D.dbg,(size_t)K.ndbleven*4*sizeof(float),
+    cudaMemcpyDeviceToHost)); return 0; }
+
+__constant__ int c_lamda[64];
+
+/* ---------------- Fase 3 refeita (08/10/2026): summation ----------------
+   O kernel antigo usava UMA thread por par (ia,ib) e cada thread varria os
+   natoms valores de ic em serie. Com 367 atomos sobravam ~1500 pares por
+   passo de m -- uma dezena de blocos numa placa que segura ~36 mil threads --
+   e 97% dos ic eram descartados dentro do laco. Medido: 345 s de 425 s.
+
+   O desenho novo tem tres pecas, e NENHUMA muda a ordem de uma soma:
+
+   1. Thread por (par, j). csum[j] so' depende da linha j de algam e de
+      tevenelem, entao as radim (15) linhas sao independentes. Cada thread
+      percorre os trios na MESMA ordem de ic e soma k na MESMA ordem que a
+      CPU: csum[j] += (algam*bsum)*tevenelem. Bit a bit igual.
+
+   2. Lista de trios compactada uma vez no setup. evedim, eegdim, mevadd,
+      talpha e tgamma nao mudam na corrida (energia fixa, allrotation roda
+      uma vez), entao o filtro "ic==ib ou evedim<1" sai do laco.
+
+   3. algam em forma fechada. A recorrencia da CPU (mscdrund.cpp:160) so'
+      aplica conj, que e' exato, a uma entrada vizinha cujo (p,q) e' o
+      oposto. Pela tabela lamda, toda entrada com p<0, ou p==0 e q<0, e'
+      conj da entrada (-p,-q), e essa e' sempre calculada direto por fexpix.
+      Entao cada linha sai sozinha, com a mesma expressao xc=-p*xb-q*xa que
+      a CPU avaliou -- mesmos bits.
+
+   E a copia bsum<-asum (16 MB por passo de m) sumiu: o passo le asum, que
+   so' muda depois, quando k_sum_scatter espalha o resultado. */
+
+typedef struct { int ic, evedim, eegdim, mevadd; float xa, xb; int ib; } Gtrio;
+
+static Gcplx *d_tevenelem = NULL;
+static Gcplx *d_asum = NULL;
+static Gcplx *d_sumtmp = NULL;   /* radim por par sobrevivente */
+/* Duas fases (08/10/2026, ver k_sum_prod): um "slot" e' um (trio,k). Os
+   slots de cada par ficam na ordem exata em que a CPU soma. */
+static int2 *d_slot = NULL;       /* (trio global, k) */
+static unsigned char *d_slotev = NULL; /* evedim do trio do slot */
+static int *d_soff = NULL;        /* inicio dos slots de cada par, +1 */
+static Gcplx *d_prod = NULL;      /* 16 produtos por slot */
+static int *d_item = NULL;        /* (slot local)*16+j, so' os j<evedim */
+static long h_item_offset[16] = {0};
+static long h_item_count[16] = {0};
+static long h_slot_offset[16] = {0};
+static long h_slot_count[16] = {0};
+static long g_maxslots = 0;
+static short2 *d_pairs = NULL;
+static int *d_toff = NULL;        /* inicio dos trios de cada par, +1 */
+static Gtrio *d_trios = NULL;
+static Gcplx *d_emit = NULL;      /* linhas dos emissores, contiguas */
+static int *d_emitidx = NULL;
+static Gcplx *h_emit = NULL;      /* pinned */
+static int h_emitidx[1250];
+static int g_nemit = 0;
+static int g_ntrielem = 0;
+static int h_pair_offset[16] = {0};
+static int h_pair_count[16] = {0};
+static int g_maxpairs = 0;
+static long g_ntrios = 0;
+
+extern "C" int mscdgpu_setup_summation(
+    const int *tevencut, const int *tevendim, const int *tevenadd,
+    const float *tevenpar, const float *talpha, const float *tgamma,
+    int ntrieven, int ntrielem, const float *patom, int msorder)
+{
+    int n = K.natoms;
+    g_ntrielem = ntrielem;
+    if (K.radim > 16) { snprintf(g_err,sizeof(g_err),"radim %d > 16",K.radim); return 1; }
+    if (msorder > 15) { snprintf(g_err,sizeof(g_err),"msorder %d > 15",msorder); return 1; }
+
+    CK(cudaMalloc((void**)&d_tevenelem, (size_t)ntrielem * sizeof(Gcplx)));
+    CK(cudaMalloc((void**)&d_asum, (size_t)n * n * K.radim * sizeof(Gcplx)));
+
+    int lamda[64];
+    for (int j=0; j<32; ++j) {
+        int k, m;
+        if ((j==0)||(j==3)||(j==10)) k=0;
+        else if (j<3) k=3-j*2;
+        else if (j<6) k=18-j*4;
+        else if (j<8) k=13-j*2;
+        else if (j<10) k=51-j*6;
+        else if (j<13) k=46-j*4;
+        else if (j<15) k=108-j*8;
+        else k=0;
+        if (j==10) m=2;
+        else if ((j==3)||(j==6)||(j==7)||(j==11)||(j==12)) m=1;
+        else m=0;
+        lamda[j] = k; lamda[32+j] = m;
+    }
+    CK(cudaMemcpyToSymbol(c_lamda, lamda, 64 * sizeof(int)));
+
+    /* Pares sobreviventes por m (mesma ordem da CPU) e, para cada par, os
+       trios com evedim>=1 na ordem crescente de ic. */
+    size_t cap = (size_t)(msorder + 1) * n * n;
+    short2 *hp = (short2*)malloc(cap * sizeof(short2));
+    int *ho = (int*)malloc((cap + 1) * sizeof(int));
+    size_t tcap = 1 << 20, nt = 0;
+    Gtrio *ht = (Gtrio*)malloc(tcap * sizeof(Gtrio));
+    if (!hp || !ho || !ht) { snprintf(g_err,sizeof(g_err),"malloc setup_summation"); return 1; }
+
+    int tot = 0;
+    g_maxpairs = 0;
+    for (int m = 0; m < 16; ++m) h_pair_count[m] = h_pair_offset[m] = 0;
+    for (int m = 2; m <= msorder; ++m) {
+        h_pair_offset[m] = tot;
+        int count = 0;
+        for (int ia = 0; ia < n; ++ia) {
+            if (m == 2 && patom[ia * 12 + 7] == 0.0f) continue;
+            for (int ib = 0; ib < n; ++ib) {
+                if (ib == ia) continue;
+                if (tevencut[(m-1)*n*n + ia*n + ib] == 0) continue;
+                short2 p; p.x = ia; p.y = ib;
+                hp[tot + count] = p;
+                ho[tot + count] = (int)nt;
+                for (int ic = 0; ic < n; ++ic) {
+                    size_t id = (size_t)ia*n*n + (size_t)ib*n + ic;
+                    int evedim = tevendim[id];
+                    if (m > 8) evedim >>= 24;          /* sizeof(int)==4 */
+                    else evedim >>= (m - 2) * 4;
+                    evedim &= 15;
+                    if (ic == ib || evedim < 1) continue;
+                    int k = tevenadd[id];
+                    Gtrio t;
+                    t.ic = ic; t.evedim = evedim; t.ib = ib;
+                    t.eegdim = (int)tevenpar[k * 10 + 5];
+                    t.mevadd = (int)tevenpar[k * 10 + 6];
+                    t.xa = talpha ? talpha[id] : 0.0f;
+                    t.xb = tgamma ? tgamma[id] : 0.0f;
+                    if (evedim > 1 && (t.eegdim >= 16 || !talpha || !tgamma)) {
+                        snprintf(g_err,sizeof(g_err),"erro 901 no trio %d %d %d",ia,ib,ic);
+                        return 901;
+                    }
+                    if (nt == tcap) {
+                        tcap *= 2;
+                        ht = (Gtrio*)realloc(ht, tcap * sizeof(Gtrio));
+                        if (!ht) { snprintf(g_err,sizeof(g_err),"realloc trios"); return 1; }
+                    }
+                    ht[nt++] = t;
+                }
+                count++;
+            }
+        }
+        h_pair_count[m] = count;
+        if (count > g_maxpairs) g_maxpairs = count;
+        tot += count;
+    }
+    ho[tot] = (int)nt;
+    g_ntrios = (long)nt;
+
+    /* slots: para cada par na ordem, cada trio na ordem, k = 0..evedim-1 */
+    long ns = 0;
+    for (size_t t = 0; t < nt; ++t) ns += ht[t].evedim;
+    int2 *hs = (int2*)malloc((size_t)(ns > 0 ? ns : 1) * sizeof(int2));
+    unsigned char *he = (unsigned char*)malloc((size_t)(ns > 0 ? ns : 1));
+    int *hso = (int*)malloc((size_t)(tot + 1) * sizeof(int));
+    if (!hs || !he || !hso) { snprintf(g_err,sizeof(g_err),"malloc slots"); return 1; }
+    {
+        long s = 0;
+        int pi = 0;
+        g_maxslots = 0;
+        for (int m = 2; m <= msorder; ++m) {
+            h_slot_offset[m] = s;
+            for (int i = 0; i < h_pair_count[m]; ++i, ++pi) {
+                hso[pi] = (int)s;
+                for (int t = ho[pi]; t < ho[pi + 1]; ++t)
+                    for (int k = 0; k < ht[t].evedim; ++k) {
+                        hs[s].x = t; hs[s].y = k;
+                        he[s] = (unsigned char)ht[t].evedim;
+                        ++s;
+                    }
+            }
+            h_slot_count[m] = s - h_slot_offset[m];
+            if (h_slot_count[m] > g_maxslots) g_maxslots = h_slot_count[m];
+        }
+        hso[tot] = (int)s;
+    }
+    /* itens de trabalho: so' os (slot, j) com j<evedim -- 71% das threads de
+       16-por-slot nasciam ociosas, porque quase todo trio tem evedim=3 */
+    long ni = 0;
+    for (long s = 0; s < ns; ++s) ni += (he[s] < K.radim ? he[s] : K.radim);
+    int *hi_ = (int*)malloc((size_t)(ni > 0 ? ni : 1) * sizeof(int));
+    if (!hi_) { snprintf(g_err,sizeof(g_err),"malloc itens"); return 1; }
+    {
+        long q = 0;
+        for (int m = 2; m <= msorder; ++m) {
+            h_item_offset[m] = q;
+            long s0 = h_slot_offset[m], s1 = s0 + h_slot_count[m];
+            if (h_slot_count[m] * 16 >= 2147483647L) {
+                snprintf(g_err,sizeof(g_err),"slots demais em m=%d",m); return 1;
+            }
+            for (long s = s0; s < s1; ++s) {
+                int ev = he[s] < K.radim ? he[s] : K.radim;
+                for (int j = 0; j < ev; ++j) hi_[q++] = (int)((s - s0) * 16 + j);
+            }
+            h_item_count[m] = q - h_item_offset[m];
+        }
+    }
+
+    if (tot > 0) {
+        CK(cudaMalloc((void**)&d_pairs, (size_t)tot * sizeof(short2)));
+        CK(cudaMemcpy(d_pairs, hp, (size_t)tot * sizeof(short2), cudaMemcpyHostToDevice));
+        CK(cudaMalloc((void**)&d_toff, (size_t)(tot + 1) * sizeof(int)));
+        CK(cudaMemcpy(d_toff, ho, (size_t)(tot + 1) * sizeof(int), cudaMemcpyHostToDevice));
+        CK(cudaMalloc((void**)&d_sumtmp, (size_t)g_maxpairs * K.radim * sizeof(Gcplx)));
+        CK(cudaMalloc((void**)&d_soff, (size_t)(tot + 1) * sizeof(int)));
+        CK(cudaMemcpy(d_soff, hso, (size_t)(tot + 1) * sizeof(int), cudaMemcpyHostToDevice));
+    }
+    if (ns > 0) {
+        CK(cudaMalloc((void**)&d_slot, (size_t)ns * sizeof(int2)));
+        CK(cudaMemcpy(d_slot, hs, (size_t)ns * sizeof(int2), cudaMemcpyHostToDevice));
+        CK(cudaMalloc((void**)&d_slotev, (size_t)ns));
+        CK(cudaMemcpy(d_slotev, he, (size_t)ns, cudaMemcpyHostToDevice));
+        CK(cudaMalloc((void**)&d_prod, (size_t)g_maxslots * 16 * sizeof(Gcplx)));
+        CK(cudaMalloc((void**)&d_item, (size_t)ni * sizeof(int)));
+        CK(cudaMemcpy(d_item, hi_, (size_t)ni * sizeof(int), cudaMemcpyHostToDevice));
+    }
+    free(hs); free(he); free(hso); free(hi_);
+    if (nt > 0) {
+        CK(cudaMalloc((void**)&d_trios, nt * sizeof(Gtrio)));
+        CK(cudaMemcpy(d_trios, ht, nt * sizeof(Gtrio), cudaMemcpyHostToDevice));
+    }
+    free(hp); free(ho); free(ht);
+
+    g_nemit = 0;
+    for (int ia = 0; ia < n; ++ia)
+        if (patom[ia * 12 + 7] != 0.0f) h_emitidx[g_nemit++] = ia;
+    if (g_nemit > 0) {
+        size_t sz = (size_t)g_nemit * n * K.radim * sizeof(Gcplx);
+        CK(cudaMalloc((void**)&d_emit, sz));
+        CK(cudaMallocHost((void**)&h_emit, sz));
+        CK(cudaMalloc((void**)&d_emitidx, g_nemit * sizeof(int)));
+        CK(cudaMemcpy(d_emitidx, h_emitidx, g_nemit * sizeof(int), cudaMemcpyHostToDevice));
+    }
+    if (getenv("MSCD_GPUPROF")) {
+        /* distribuicao de trios e de MACs por par, por m: o kernel dura o
+           tempo do par mais pesado, nao da media */
+        for (int m = msorder; m >= 2; --m) {
+            int c0 = h_pair_count[m], o0 = h_pair_offset[m];
+            if (c0 <= 0) continue;
+            long mx = 0, sum = 0, mxm = 0, summ = 0;
+            int *hq = (int*)malloc((size_t)(c0 + 1) * sizeof(int));
+            Gtrio *hh = (Gtrio*)malloc((size_t)g_ntrios * sizeof(Gtrio));
+            cudaMemcpy(hq, d_toff + o0, (size_t)(c0 + 1) * sizeof(int), cudaMemcpyDeviceToHost);
+            cudaMemcpy(hh, d_trios, (size_t)g_ntrios * sizeof(Gtrio), cudaMemcpyDeviceToHost);
+            for (int i = 0; i < c0; ++i) {
+                long nt_ = hq[i + 1] - hq[i], mac = 0;
+                for (int t = hq[i]; t < hq[i + 1]; ++t) mac += hh[t].evedim;
+                sum += nt_; summ += mac;
+                if (nt_ > mx) mx = nt_;
+                if (mac > mxm) mxm = mac;
+            }
+            fprintf(stderr, "GPUPROF m=%d pares=%d trios: media %.1f max %ld | passos por thread: media %.1f max %ld\n",
+                m, c0, (double)sum / c0, mx, (double)summ / c0, mxm);
+            free(hq); free(hh);
+        }
+    }
+    fprintf(stderr, "GPU summation: %d pares, %ld trios, %ld slots, %d emissores, %.1f MB de produtos\n",
+        tot, g_ntrios, ns, g_nemit, g_maxslots * 16 * sizeof(Gcplx) / 1048576.0);
+    return 0;
+}
+
+__global__ static void k_init_asum(Gcplx *asum, const Gcplx *devendetec, int natoms, int radim, int msorder)
+{
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    int ic = blockIdx.y * blockDim.y + threadIdx.y;
+    int ib = blockIdx.z * blockDim.z + threadIdx.z;
+    if (j >= radim || ic >= natoms || ib >= natoms) return;
+
+    int id = ib * natoms * radim + ic * radim + j;
+    if (msorder > 0 && ic != ib) {
+        asum[id] = devendetec[id];
+    } else {
+        asum[id].re = 0.0f;
+        asum[id].im = 0.0f;
+    }
+}
+
+/* blockDim = (16, PPB): threadIdx.x e' j, threadIdx.y escolhe o par. */
+__global__ static void k_sum_step(
+    int count, const short2 *pairs, const int *toff, const Gtrio *trios,
+    const Gcplx *asum, const Gcplx *devendetec, const Gcplx *tevenelem,
+    const Gcplx *cexpix, int natoms, int radim, int exndata, int exmdata,
+    Gcplx *out)
+{
+    int j = threadIdx.x;
+    int pidx = blockIdx.x * blockDim.y + threadIdx.y;
+    if (pidx >= count || j >= radim) return;
+
+    int ia = pairs[pidx].x;
+    int ib = pairs[pidx].y;
+    Gcplx c = devendetec[ia * natoms * radim + ib * radim + j];
+    int p = c_lamda[j];
+    int t1 = toff[pidx + 1];
+
+    for (int t = toff[pidx]; t < t1; ++t) {
+        Gtrio T = trios[t];
+        if (j >= T.evedim) continue;
+        int megadd = ib * natoms * radim + T.ic * radim;
+        if (T.evedim == 1) {
+            c = cadd(c, cmul(asum[megadd], tevenelem[T.mevadd]));
+        } else {
+            float xa = T.xa, xb = T.xb;
+            const Gcplx *te = tevenelem + T.mevadd + j * T.eegdim;
+            for (int k = 0; k < T.evedim; ++k) {
+                int q = c_lamda[k];
+                Gcplx al;
+                if (p == 0 && q == 0) {
+                    al.re = 1.0f; al.im = 0.0f;
+                } else if (p < 0 || (p == 0 && q < 0)) {
+                    int p2 = -p, q2 = -q;
+                    float xc = -p2 * xb - q2 * xa;
+                    Gcplx e = d_fexpix(cexpix, exndata, exmdata, xc);
+                    al.re = e.re; al.im = -e.im;
+                } else {
+                    float xc = -p * xb - q * xa;
+                    al = d_fexpix(cexpix, exndata, exmdata, xc);
+                }
+                c = cadd(c, cmul(cmul(al, asum[megadd + k]), te[k]));
+            }
+        }
+    }
+    out[pidx * radim + j] = c;
+}
+
+/* Fase 1: um produto por (slot, j). Nao depende da ordem -- cada produto e'
+   calculado sozinho, com a mesma expressao de k_sum_step. */
+__global__ static void k_sum_prod(
+    long nitems, const int *item, const int2 *slot, const Gtrio *trios,
+    const Gcplx *asum, const Gcplx *tevenelem, const Gcplx *cexpix,
+    int natoms, int radim, int exndata, int exmdata, Gcplx *prod)
+{
+    long i = (long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= nitems) return;
+    int it = item[i];
+    long s = it >> 4;
+    int j = it & 15;
+    int2 sk = slot[s];
+    Gtrio T = trios[sk.x];
+    int k = sk.y;
+    int megadd = T.ib * natoms * radim + T.ic * radim;
+    Gcplx v;
+    if (T.evedim == 1) {
+        v = cmul(asum[megadd], tevenelem[T.mevadd]);
+    } else {
+        int p = c_lamda[j], q = c_lamda[k];
+        float xa = T.xa, xb = T.xb;
+        Gcplx al;
+        if (p == 0 && q == 0) {
+            al.re = 1.0f; al.im = 0.0f;
+        } else if (p < 0 || (p == 0 && q < 0)) {
+            int p2 = -p, q2 = -q;
+            float xc = -p2 * xb - q2 * xa;
+            Gcplx e = d_fexpix(cexpix, exndata, exmdata, xc);
+            al.re = e.re; al.im = -e.im;
+        } else {
+            float xc = -p * xb - q * xa;
+            al = d_fexpix(cexpix, exndata, exmdata, xc);
+        }
+        v = cmul(cmul(al, asum[megadd + k]), tevenelem[T.mevadd + j * T.eegdim + k]);
+    }
+    prod[s * 16 + j] = v;
+}
+
+#ifndef SUM_UNR
+#define SUM_UNR 16
+#endif
+/* Fase 2: thread por (par, j) soma os produtos NA ORDEM DOS SLOTS, que e' a
+   ordem da CPU. So' sobra a cadeia de adicoes; as leituras nao dependem do
+   acumulador, entao o desenrolar por 4 deixa a placa buscar adiantado sem
+   mudar a ordem de nenhuma soma. */
+__global__ static void k_sum_acc(
+    int count, const short2 *pairs, const int *soff, long sbase,
+    const unsigned char *slotev, const Gcplx *prod,
+    const Gcplx *devendetec, int natoms, int radim, Gcplx *out)
+{
+    int j = threadIdx.x;
+    int pidx = blockIdx.x * blockDim.y + threadIdx.y;
+    if (pidx >= count || j >= radim) return;
+    int ia = pairs[pidx].x, ib = pairs[pidx].y;
+    Gcplx c = devendetec[ia * natoms * radim + ib * radim + j];
+    long s = soff[pidx], s1 = soff[pidx + 1];
+    for (; s + SUM_UNR <= s1; s += SUM_UNR) {
+        Gcplx v[SUM_UNR];
+        int e[SUM_UNR];
+        const Gcplx *pp = prod + (s - sbase) * 16 + j;
+#pragma unroll
+        for (int u = 0; u < SUM_UNR; ++u) { e[u] = slotev[s + u]; v[u] = pp[u * 16]; }
+#pragma unroll
+        for (int u = 0; u < SUM_UNR; ++u) if (j < e[u]) c = cadd(c, v[u]);
+    }
+    for (; s < s1; ++s)
+        if (j < slotev[s]) c = cadd(c, prod[(s - sbase) * 16 + j]);
+    out[pidx * radim + j] = c;
+}
+
+__global__ static void k_sum_scatter(int count, const short2 *pairs,
+    const Gcplx *tmp, Gcplx *asum, int natoms, int radim)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count * radim) return;
+    int pidx = i / radim, j = i - pidx * radim;
+    asum[pairs[pidx].x * natoms * radim + pairs[pidx].y * radim + j] = tmp[i];
+}
+
+__global__ static void k_gather_emit(int nemit, const int *emitidx,
+    const Gcplx *asum, Gcplx *out, int rowlen)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= nemit * rowlen) return;
+    int e = i / rowlen, r = i - e * rowlen;
+    out[i] = asum[(size_t)emitidx[e] * rowlen + r];
+}
+
+#define SUM_PPB 8
+static float last_akin = -1.0f;
+/* Dividido em lancar e terminar (08/10/2026): entre os dois a CPU faz o
+   onevenemit do bloco final, que nao depende do asum. */
+static int g_sum_pending = 0;
+extern "C" int mscdgpu_summation_finish(Gcplx *asum_host);
+extern "C" int mscdgpu_summation_launch(float akin, const Gcplx *tevenelem);
+extern "C" int mscdgpu_summation(float akin, const Gcplx *tevenelem, Gcplx *asum_host, const float *patom)
+{
+    int e = mscdgpu_summation_launch(akin, tevenelem);
+    if (e) return e;
+    return mscdgpu_summation_finish(asum_host);
+}
+
+static int g_prof = -1, g_ncall = 0, g_ne = 0;
+static cudaEvent_t g_ev[32];
+static double g_acc[32];
+
+extern "C" int mscdgpu_summation_launch(float akin, const Gcplx *tevenelem)
+{
+    if (!g_ready) { snprintf(g_err,sizeof(g_err),"setup nao chamado"); return 1; }
+
+    /* So' reenvia tevenelem quando a energia muda (scanmode=223, k fixo). */
+    if (akin != last_akin) {
+        CK(cudaMemcpy(d_tevenelem, tevenelem, (size_t)g_ntrielem * sizeof(Gcplx), cudaMemcpyHostToDevice));
+        last_akin = akin;
+    }
+
+    int n = K.natoms, rd = K.radim;
+    if (g_prof < 0) {
+        g_prof = getenv("MSCD_GPUPROF") ? 1 : 0;
+        if (g_prof) for (int i = 0; i < 32; ++i) { cudaEventCreate(&g_ev[i]); g_acc[i] = 0.0; }
+    }
+    int prof = g_prof, ne = 0;
+    cudaEvent_t *ev = g_ev;
+    if (prof) cudaEventRecord(ev[ne++]);
+    dim3 threads_init(16, 8, 8);
+    dim3 blocks_init((rd + 15)/16, (n + 7)/8, (n + 7)/8);
+    k_init_asum<<<blocks_init, threads_init>>>(d_asum, D.devendetec, n, rd, K.msorder);
+    CK(cudaGetLastError());
+
+    for (int m = K.msorder; m >= 2; --m) {
+        int count = h_pair_count[m];
+        if (count <= 0) continue;
+        int off = h_pair_offset[m];
+        long ns = h_slot_count[m], sbase = h_slot_offset[m];
+        long ni = h_item_count[m];
+        if (ni > 0) {
+            k_sum_prod<<<(unsigned)((ni + 255) / 256), 256>>>(
+                ni, d_item + h_item_offset[m], d_slot + sbase, d_trios, d_asum, d_tevenelem, D.cexpix,
+                n, rd, K.exndata, K.exmdata, d_prod);
+            CK(cudaGetLastError());
+        }
+        if (prof) cudaEventRecord(ev[ne++]);
+        dim3 tb(16, SUM_PPB);
+        k_sum_acc<<<(count + SUM_PPB - 1) / SUM_PPB, tb>>>(
+            count, d_pairs + off, d_soff + off, sbase, d_slotev, d_prod,
+            D.devendetec, n, rd, d_sumtmp);
+        CK(cudaGetLastError());
+        int tot = count * rd;
+        if (prof) cudaEventRecord(ev[ne++]);
+        k_sum_scatter<<<(tot + 255) / 256, 256>>>(count, d_pairs + off, d_sumtmp, d_asum, n, rd);
+        CK(cudaGetLastError());
+        if (prof) cudaEventRecord(ev[ne++]);
+    }
+
+    if (g_nemit > 0) {
+        int rowlen = n * rd, tot = g_nemit * rowlen;
+        k_gather_emit<<<(tot + 255) / 256, 256>>>(g_nemit, d_emitidx, d_asum, d_emit, rowlen);
+        CK(cudaGetLastError());
+        CK(cudaMemcpyAsync(h_emit, d_emit, (size_t)tot * sizeof(Gcplx), cudaMemcpyDeviceToHost, 0));
+    }
+    if (prof) cudaEventRecord(ev[ne++]);
+    g_ne = ne;
+    g_sum_pending = 1;
+    return 0;
+}
+
+extern "C" int mscdgpu_summation_finish(Gcplx *asum_host)
+{
+    if (!g_sum_pending) { snprintf(g_err,sizeof(g_err),"finish sem launch"); return 1; }
+    g_sum_pending = 0;
+    CK(cudaStreamSynchronize(0));
+    int rowlen = K.natoms * K.radim;
+    for (int e = 0; e < g_nemit; ++e)
+        memcpy(asum_host + (size_t)h_emitidx[e] * rowlen, h_emit + (size_t)e * rowlen,
+            (size_t)rowlen * sizeof(Gcplx));
+    if (g_prof > 0) {
+        for (int i = 1; i < g_ne; ++i) { float ms; cudaEventElapsedTime(&ms, g_ev[i - 1], g_ev[i]); g_acc[i] += ms; }
+        if (++g_ncall % 2000 == 0) {
+            fprintf(stderr, "GPUPROF %d chamadas, ms acumulados por trecho:", g_ncall);
+            for (int i = 1; i < g_ne; ++i) fprintf(stderr, " %.0f", g_acc[i]);
+            fprintf(stderr, "\n");
+        }
+    }
+    return 0;
+}
+
+extern "C" void mscdgpu_teardown(void)
+{ if (!g_ready) return;
+  cudaFree(D.patom); cudaFree(D.devenpar); cudaFree(D.rotmata);
+  cudaFree(D.rotmatc); cudaFree(D.thermat); cudaFree(D.aweight);
+  cudaFree(D.hankmat_a); cudaFree(D.hankarg_b); cudaFree(D.phasec);
+  cudaFree(D.cexpix); cudaFree(D.pairgeo); cudaFree(D.pairkind);
+  cudaFree(D.alnum);
+  cudaFree((void*)D.devenadd); cudaFree(D.devendetec);
+
+  cudaFree(d_tevenelem); cudaFree(d_asum); cudaFree(d_sumtmp);
+  cudaFree(d_pairs); cudaFree(d_toff); cudaFree(d_trios);
+  cudaFree(d_emit); cudaFree(d_emitidx); cudaFreeHost(h_emit);
+  cudaFree(d_slot); cudaFree(d_slotev); cudaFree(d_soff); cudaFree(d_prod);
+  cudaFree(d_item); cudaFree(d_cxa); d_cxa=NULL;
+  d_slot=NULL; d_slotev=NULL; d_soff=NULL; d_prod=NULL; d_item=NULL;
+  d_tevenelem=d_asum=d_sumtmp=d_emit=NULL; d_pairs=NULL; d_toff=NULL;
+  d_trios=NULL; d_emitidx=NULL; h_emit=NULL;
+
+  last_akin = -1.0f;
+  memset(&D,0,sizeof(D)); g_ready=0;
+}
+
+extern "C" void mscdgpu_sync(void) { cudaDeviceSynchronize(); }
+
+extern "C" const char *mscdgpu_lasterror(void) { return g_err; }

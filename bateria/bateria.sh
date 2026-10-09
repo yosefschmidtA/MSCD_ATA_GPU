@@ -50,7 +50,7 @@ resumo() {
 # ---------------------------------------------------------------------
 [ -f Cov0.txt ] || { echo "falta o Cov0.txt na raiz do projeto"; exit 1; }
 for v in $VERSOES; do
-  [ -x $B/bin/randmscd_$v ] || { echo "falta $B/bin/randmscd_$v"; exit 1; }
+  [ -x $B/bin/randmscd_$v ] || { echo "falta $B/bin/randmscd_$v. Os executaveis nao vem pelo git, rode antes ./bateria/instalar_ubuntu.sh ate o fim"; exit 1; }
 done
 if ps -eo comm= | grep -q "^randmscd"; then
   echo "ja' ha' um MSCD rodando nesta maquina; a medida sairia contaminada."

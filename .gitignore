@@ -32,3 +32,8 @@ mscdlist.txt
 # Documentação de terceiros (manual LBNL, artigo Elsevier): mantida local,
 # fora do repositório público por questão de direitos autorais.
 *.pdf
+
+# Bateria: os executaveis sao de cada maquina (o instalar_ubuntu.sh compila
+# os seus a partir do git) e a pasta de compilacao e' descartavel.
+bateria/bin/randmscd_*
+bateria/build/

@@ -1,0 +1,49 @@
+[timer] -- ate readparameter          0.009 s
+[dedup] 1 presenca (tabela)            2.846 s
+[dedup] 2 escolha do nsymm             0.623 s
+[dedup] 3 indice de cada trio          1.332 s
+[timer] C indexa natoms^3             4.919 s
+[timer] D estatisticas                0.025 s
+[timer] symtrivert TOTAL              4.944 s
+[timer] symdblvert                    0.044 s
+[timer]   precut vibracionais         0.001 s
+[timer]   precut rotacionais          0.012 s
+[timer]   precut esfericas+cortes     1.304 s
+[timer]   precut alltrievent          1.622 s
+[timer]   precut maximo do pemeven    0.130 s
+[timer]   precut   (pathcut: subida)    0.998 s
+[timer]   precut   (pathcut: passos)    1.420 s
+[timer]   precut pathcut msorder x natoms^3    0.575 s
+[timer]   precut   (estatisticas: laco)    0.048 s
+[timer]   precut   (estatisticas: resto e saida)    0.026 s
+[timer]   precut estatisticas+alocacoes    0.072 s
+[timer] precutable                    6.207 s
+[timer] sendjobs/receivejobs          0.000 s
+[timer]   (antes de maketripar)       0.063 s
+[timer]   maketripar                  0.113 s
+[timer]   makedblpar                  0.002 s
+[timer]   allrotation natoms^3        0.000 s
+[timer]   alltrievent(0) do laco      0.290 s
+[timer]   gpu: preparo do host        0.000 s
+[timer]   gpu: mscdgpu_setup (contexto + tabelas)    0.005 s
+GPU: U com 7941 de 926406 posicoes, 5205 de 515782 pares distintos
+GPU summation: 1743 pares, 7767 trios, 34422 slots, 3 emissores, 3.9 MB de produtos
+[timer]   gpu: setup_summation (trios, slots, itens)    0.016 s
+GPU: pronta (515782 pares, radim=15, alnum=20, rlnum=20, lamdum=25, betanum=361, halnum=20, handata=101, cmnum=5, nkind=2)
+[hist] visitas potenciais (m,ia,ib,ic) 5355553086
+[hist]   podados por tevencut (par ia,ib) 5353874577  99.97%
+[hist]   podados por evedim<1 ou ic==ib   1670742   0.03%
+[hist]   evedim= 1          2343 trios   0.00% das visitas          2343 MACs
+[hist]   evedim= 3          3860 trios   0.00% das visitas         34740 MACs
+[hist]   evedim= 6           279 trios   0.00% das visitas         10044 MACs
+[hist]   evedim=10            90 trios   0.00% das visitas          9000 MACs
+[hist]   evedim=15          1195 trios   0.00% das visitas        268875 MACs
+[acc rank 0] dentro do laco dos pontos  soma dos trechos    6.392 s
+[acc rank 0]   thetainside                       0.002 s    0.02%       3895 chamadas
+[acc rank 0]   alldblevent                       0.147 s    2.30%       3895 chamadas
+[acc rank 0]   allevendetec                      0.296 s    4.63%       3895 chamadas
+[acc rank 0]   summation: laco de m (gpu)        0.132 s    2.06%       3895 chamadas
+[acc rank 0]   summation: bloco final (onevenemit)    4.296 s   67.21%       3895 chamadas
+[acc rank 0]   summation: espera da placa        0.094 s    1.47%       3895 chamadas
+[acc rank 0]   summation: somas finais           1.426 s   22.30%       3895 chamadas
+[timer] laco dos 779 pontos           6.902 s

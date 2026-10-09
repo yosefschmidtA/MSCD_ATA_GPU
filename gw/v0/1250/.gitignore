@@ -1,0 +1,33 @@
+# Objetos e executáveis — o makefile não tem alvo `clean`, então os .o
+# ficam na raiz junto do fonte. Nenhum deles pertence ao repositório.
+*.o
+*.a
+randmscd
+randmscd_parallel
+calchi
+caldif
+calfac
+calmfp
+calnox
+calvib
+poconv
+psconv
+rmconv
+spconv
+xpspeak
+
+# Dump de 32 bits herdado da máquina antiga (ver CLAUDE.md).
+core
+
+# Backups locais da cópia original.
+*.tar.gz
+.obj-antigos/
+
+# Grafo: gerado por `graphify update .` em ~3 s, não versionar.
+graphify-out/
+mscdout.txt
+mscdlist.txt
+
+# Documentação de terceiros (manual LBNL, artigo Elsevier): mantida local,
+# fora do repositório público por questão de direitos autorais.
+*.pdf

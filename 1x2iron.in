@@ -31,23 +31,23 @@ pe	pesaidaBI.out	        output photoemission data file
 55.845  69.72   16.0    0.00	efective weight for kind 1-4 (amu)
 0 	0.7 	0.2 	  	ATA, ATAWeight1, ATAWeight2, t=(1-ATAWeight)*t1+ATAWeight*t2)
 0.0     0.0     0.0     0.0     magnetization amplitude for kind 1-4
-0	105.0	300.0	0.001	vinner(eV),tdebye,tsample(K),pathcut 
+4	205.0	300.0	0.001	vinner(eV),tdebye,tsample(K),pathcut 
 0.0     0.0     0.0            	fit try for vinner, tdebye and lattice
 
 1       1        1      0        layer, kind, emitter, lineatom
 0       0       0       0       latoms(xa,xb,ya,yb)
- 0.95000000     90.000000       unita(len ang) (fcc (111) structure)
- 1.92000000      0.000000       unitb(len ang) (in unit of lattice)
- 0.66729273     45.000000       origin(len,ang) (in unit of lattice)
- 0.47184722                     interlayer spacing (unit lattice)
- 0.0    0.0     0.0
+ 0.94369443      90.000000       unita(len ang) (fcc (111) structure)
+ 0.94369443       0.000000       unitb(len ang) (in unit of lattice)
+ 1.84000000      0.000000       origin(len,ang) (in unit of lattice)
+ 0.47000000                     interlayer spacing (unit lattice)
+ 0.0    0.0     0.0             fit try for spacing, length and units
 
 2       1        1      0        layer, kind, emitter, lineatom
 0       0       0       0       latoms(xa,xb,ya,yb)
  0.94369443      90.000000       unita(len ang) (fcc (111) structure)
  0.94369443       0.000000       unitb(len ang) (in unit of lattice)
  1.84000000      0.000000       origin(len,ang) (in unit of lattice)
- 0.60000000                     interlayer spacing (unit lattice)
+ 0.47000000                     interlayer spacing (unit lattice)
  0.0    0.0     0.0             fit try for spacing, length and units
 
 3       1        1      0        layer, kind, emitter, lineatom
@@ -55,7 +55,7 @@ pe	pesaidaBI.out	        output photoemission data file
  0.94369443     90.000000       unita(len ang) (fcc (111) structure)
  0.94369443      0.000000       unitb(len ang) (in unit of lattice)
  0.66729273     45.000000       origin(len,ang) (in unit of lattice)
- 0.56000000                     interlayer spacing (unit lattice)
+ 0.47000000                     interlayer spacing (unit lattice)
  0.0    0.0     0.0
 
 4       1        1      0        layer, kind, emitter, lineatom
@@ -63,7 +63,7 @@ pe	pesaidaBI.out	        output photoemission data file
  0.94369443     90.000000       unita(len ang) (fcc (111) structure)
  0.94369443      0.000000       unitb(len ang) (in unit of lattice)
  0.89900000      0.000000       origin(len,ang) (in unit of lattice)
- 0.51000000                     interlayer spacing (unit lattice)
+ 0.47000000                     interlayer spacing (unit lattice)
  0.0    0.0     0.0             fit try for spacing, length and units
 
 5       1        1      0        layer, kind, emitter, lineatom

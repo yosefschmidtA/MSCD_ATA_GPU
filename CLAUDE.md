@@ -45,6 +45,44 @@ bit a bit igual. Detalhes e chaves de ambiente em `OTIMIZACAO.md`, seção
 "Fase 6, varredura". Lista arquivo por arquivo em `gw/varredura.md`. Teste dos
 três casos, saída e log, com `gw/t.sh <rótulo>`.
 
+**Executável original** (antes de qualquer mudança). O
+`baseline/randmscd_parallel.baseline` não roda nesta máquina (pede
+`libmpi_cxx.so.40`). O mesmo código, do primeiro commit (`d4c8408`), foi
+recompilado em `gw/v0/orig/randmscd_parallel` (exato, recusa mais de 300
+átomos) e `gw/v0/1250/randmscd_parallel` (só o limite em 1250). Os dois saem
+bit a bit iguais à referência de CPU. **O original trava no Reanalyzing em
+clusters grandes** (o ferro passou de 6 minutos sem sair dele).
+
+**Bateria de desempenho em andamento** em `bateria/` (ver `bateria/LEIA.md`).
+Original contra GPU no `Cov0.txt` com raio/profundidade de 8/12 a 17/26
+(135 a 1112 átomos) e `-np` de 1 a 12, até 10 horas por rodada, com pausa
+(`touch bateria/PAUSAR`), Ctrl+C e retomada pelo `bateria/resultados.csv`. Os
+executáveis medidos estão congelados em `bateria/bin/`. **Não rode outro MSCD
+nesta máquina enquanto ela estiver rodando**, porque contamina as medidas (o
+script recusa começar se achar um).
+
+**Mais processos não ajudam com a GPU.** Ferro em 9,7 s com `-np 1`, 11,9 s com
+4 e 13,3 s com 6, e a memória por processo dobra. O `-np` é livre e o
+resultado é igual em qualquer um, mas o mais rápido é 1.
+
+**Comando do dia a dia nesta máquina** é `MSCD_GPU=1 mpirun -np 1 ./randmscd_gpu
+Cov0.txt`, sem `--bind-to none`, porque o arquivo `~/.prte/mca-params.conf`
+(`hwloc_default_binding_policy = none`, criado em 09/10/2026) tira o padrão do
+Open MPI 5 de prender o processo a um núcleo. **Em outra máquina, sem esse
+arquivo, o mesmo comando fica 2 a 3 vezes mais lento** (medido, `Cov0.txt`
+8,2 s contra 3,8 s), e nada avisa. Também dá para chamar `./randmscd_gpu`
+direto, sem `mpirun`, com o mesmo resultado.
+
+**Omicron.** As duas têm versões antigas do MSCD (`~/MSCDATA/run_*/`,
+`mscd_64bits_parallel_large_NR_alex`), sem nenhuma otimização. Lá o MPI é Intel
+(2021.17 na omicron, 2021.9 na omicron-2) e o compilador usável é o `g++-11`.
+Não têm GPU. Em 09/10/2026 estavam com 40 de 80 threads tomados por `pw.x`.
+Leia o `~/.config/agentes/MAQUINAS.md` antes de rodar qualquer coisa lá.
+
+**GPU no monitor.** O medidor de GPU do `htop` só vê a GPU integrada da Intel,
+porque o driver da NVIDIA não publica uso por processo no `fdinfo`. Para a RTX
+4060 use o `nvtop` (instalado) ou o `nvidia-smi`.
+
 ## Estado de 08/10/2026 (Fase 5)
 
 **Fase 5 feita** (`OTIMIZACAO.md`, seção "Fase 5", etapas 5a a 5m). Critério

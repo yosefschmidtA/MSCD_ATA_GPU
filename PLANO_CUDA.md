@@ -36,6 +36,12 @@ alguém.**
 
 ## COMO CONTINUAR
 
+**Para a figura do paper**, a bateria `bateria/bateria.sh` mede o executável
+original contra a versão com GPU de 135 a 1112 átomos, com `-np` de 1 a 12
+(`bateria/LEIA.md`, resultados em `bateria/resultados.csv`). Ela substitui a
+comparação V0 × V5 × CUDA pensada na seção "A figura final do paper", que era
+só com o `Cov0.txt` de 247 átomos.
+
 **Estado em 09/10/2026.** Depois da Fase 5 veio a Fase 6, uma varredura do
 código inteiro (`OTIMIZACAO.md`, seção "Fase 6, varredura"). Com 963 átomos o
 tempo foi de 310 s para 15,5 s. A GPU passou a calcular só as posições que o

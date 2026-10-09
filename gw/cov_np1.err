@@ -1,0 +1,4 @@
+GPU: U com 1588 de 60762 posicoes, 1119 de 40562 pares distintos
+GPU summation: 489 pares, 1455 trios, 3354 slots, 3 emissores, 0.3 MB de produtos
+GPU: pronta (40562 pares, radim=15, alnum=20, rlnum=20, lamdum=25, betanum=361, halnum=20, handata=101, cmnum=5, nkind=2)
+cov -np 1: 3.81 s  pico de memoria 371588 kB (por processo, o maior)
