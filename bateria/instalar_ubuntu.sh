@@ -153,9 +153,24 @@ msg "5/5 teste com 135 atomos"
 sed -E -e "s|^pe([[:space:]]+)[^[:space:]]+|pe\1$B/build/teste.out|" \
        -e "s|^[0-9.]+([[:space:]]+)[0-9.]+([[:space:]]+)([0-9.]+[[:space:]]+radius)|8\112\2\3|" \
        Cov0.txt > $B/build/teste.in
-n=$(timeout 20 $B/bin/randmscd_original $B/build/teste.in 2>/dev/null \
-    | awk '/natoms emiters/{print $1; exit}' || true)
-[ "$n" = 135 ] || erro "o original contou '$n' atomos, esperava 135"
+natoms_de() {  # entrada [log] -> numero de atomos
+  # Roda o original pelo mpirun, porque o Open MPI do Ubuntu nao aceita o
+  # executavel chamado direto, e mata assim que ele imprime a contagem
+  # (no maximo 60 s). A saida vai para arquivo e nao para um pipe.
+  local log=${2:-$SAIDAS/natoms.log} n="" i
+  setsid mpirun -np 1 $B/bin/randmscd_original "$1" > "$log" 2>&1 &
+  local pid=$!
+  for i in $(seq 120); do
+    n=$(awk '/natoms emiters/{print $1; exit}' "$log")
+    [ -n "$n" ] && break
+    kill -0 $pid 2>/dev/null || break
+    sleep 0.5
+  done
+  kill -- -$pid 2>/dev/null; wait $pid 2>/dev/null
+  echo "$n"
+}
+n=$(natoms_de $B/build/teste.in $B/build/natoms.log)
+[ "$n" = 135 ] || { tail -20 $B/build/natoms.log; erro "o original contou '$n' atomos, esperava 135 (saida acima)"; }
 echo "original conta 135 atomos, ok"
 
 rm -f $B/build/teste.out

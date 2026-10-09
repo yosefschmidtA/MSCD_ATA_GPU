@@ -88,9 +88,21 @@ entrada() {    # raio prof -> gera a entrada e devolve o caminho
   echo "$f"
 }
 
-natoms_de() {  # entrada -> numero de atomos (le o cabecalho e corta)
-  timeout 20 $B/bin/randmscd_original "$1" 2>/dev/null \
-    | awk '/natoms emiters/{print $1; exit}'
+natoms_de() {  # entrada [log] -> numero de atomos
+  # Roda o original pelo mpirun, porque o Open MPI do Ubuntu nao aceita o
+  # executavel chamado direto, e mata assim que ele imprime a contagem
+  # (no maximo 60 s). A saida vai para arquivo e nao para um pipe.
+  local log=${2:-$SAIDAS/natoms.log} n="" i
+  setsid mpirun -np 1 $B/bin/randmscd_original "$1" > "$log" 2>&1 &
+  local pid=$!
+  for i in $(seq 120); do
+    n=$(awk '/natoms emiters/{print $1; exit}' "$log")
+    [ -n "$n" ] && break
+    kill -0 $pid 2>/dev/null || break
+    sleep 0.5
+  done
+  kill -- -$pid 2>/dev/null; wait $pid 2>/dev/null
+  echo "$n"
 }
 
 mem_estimada_MB() {   # versao natoms np
