@@ -1148,3 +1148,335 @@ Tiramos três conclusões implacáveis da tabela:
 
 **Próxima Etapa (Futura):**
 Para domar a GPU e colocá-la em 100%, o programa deve agrupar (fazer *batching*) dos pontos. A placa deve engolir e resolver vetores de 1.000 ângulos de uma tacada só dentro de um mesmo kernel assíncrono, expurgando as chamadas MPI incessantes à API do CUDA.
+
+> **Correção de 08/10/2026.** A conclusão acima (latência de lançamento de
+> kernel) estava errada. Medido no `1x2iron.in` com 367 átomos, `np=1`, cada
+> chamada do `summation` levava 29 ms, e um lançamento custa microssegundos.
+> O tempo estava DENTRO do kernel, que usava uma thread por par e deixava
+> quase toda a placa parada. Ver a seção seguinte.
+
+## Fase 5, a GPU de verdade (08/10/2026, máquina nova)
+
+Máquina nova (Omarchy nativo, Open MPI 5, CUDA 13.3, g++ 16). Caso de teste
+`1x2iron.in` com a geometria do usuário de 16/08, **367 átomos, 7 emissores,
+2400 pontos, 12000 chamadas do `summation`** (5 direções por ponto). Controle
+também no `Cov0.txt`. **O critério desta fase é mais forte que o da Fase 0.** A
+saída tem de sair **bit a bit igual** à do binário de GPU anterior (congelado
+em `gw/ref_gpu`), e portanto com o mesmo R-factor. Todas as etapas abaixo
+passaram nisso, nos dois inputs.
+
+A janela de medição estava carregada (o protetor de tela do Omarchy ocupa uns
+dois núcleos, carga 3 a 5). Os números de uma mesma tabela são da mesma janela.
+
+| etapa | `1x2iron.in`, `np=1` | `Cov0.txt`, `np=1` |
+|---|---:|---:|
+| referência (Fase 3 + cache do `tevenelem`) | 450,7 s | 33,8 s |
+| 5a. kernel do `summation` com thread por (par, `j`) | 154,0 s | 26,7 s |
+| 5b. duas fases (produtos em paralelo, soma em ordem) | 92,8 s | 23,7 s |
+| 5c. itens compactados e `fexpix` sem FP64 | 77,0 s | 25,6 s |
+| 5d. sobreposição CPU × GPU no bloco final | 58,7 s | 20,5 s |
+| 5e. `onevenemit` em OpenMP com os caches simulados | **48,2 s** | **14,0 s** |
+
+**9,3× no ferro, 2,4× no `Cov0.txt`, sem mudar um bit da saída.**
+
+### 5a. O kernel do `summation` usava uma thread por par
+
+Com 367 átomos sobram ~1500 pares por passo de `m`. Uma thread por par dá uma
+dúzia de blocos numa placa que segura ~36 mil threads, e cada thread varria os
+367 `ic` em série descartando 97% deles. O kernel novo usa uma thread por
+(par, `j`), porque `csum[j]` só depende da linha `j` de `algam`, e as 15 linhas
+são independentes **sem mudar a ordem de soma nenhuma**. A lista de trios
+sobreviventes é montada uma vez no setup (energia fixa). O `algam` sai em forma
+fechada, porque a recorrência da CPU só aplica `conj` (exato) à entrada de
+`(p,q)` oposto. A cópia `bsum ← asum` de 16 MB por passo sumiu (o passo lê o
+`asum`, e um kernel de espalhamento grava depois). E o `allevendetec` parou de
+copiar o `devendetec` inteiro (16 MB) para o host a cada chamada, porque no
+modo GPU o host nunca lê esse array.
+
+### 5b. O passo `m=2` era o par mais pesado, não a média
+
+O perfil por trecho com eventos CUDA (`MSCD_GPUPROF=1`) mostrou o passo `m=2` levando
+7 ms dos 8,5 ms da chamada. Nele há pares com 366 trios, e uma thread chegava a
+5485 passos em série contra média de 133. A soma em ordem não pode ser
+paralelizada sem mudar bits, mas os **produtos** podem. Fase 1 calcula todos os
+`(algam·asum)·tevenelem` em paralelo, fase 2 só soma na ordem original.
+
+### 5c. Duas perdas na fase dos produtos
+
+71% das threads nasciam ociosas (16 por slot, mas a maioria dos trios tem
+`evedim=3`). Passou a lançar só os `(slot, j)` com `j<evedim`. E o `d_fexpix`
+comparava `xa>180.0` em `double`, que é 1/64 nesta placa. Como 180 e 360 são
+exatos e `float→double` é exato, `xa>180.0f` decide igual. O índice continua
+em `double`. Isso também derrubou o `allevendetec` de 1,45 para 0,6 ms por
+chamada (ali o argumento chega a 14 mil graus, umas 39 voltas do `while`).
+
+### 5d e 5e. O bloco final foi para várias threads, com os caches simulados
+
+Depois de 5c o `onevenemit` na CPU era 70% do laço. Ele não lê o `asum`, então
+roda enquanto a placa faz o laço de `m` (`mscdgpu_summation_launch` /
+`_finish`). Paralelizar exigiu cuidado. Os 15 `evenbelem` de cada chamada
+passam por **dois caches com tolerância**. O `termmat->rotelem` só refaz o
+`rotmatb` se `|beta-pbeta|>0,1°`, e o `hankb->fhankelfac` só refaz o `hankarg`
+se `|vkb-argument|>1e-3`. O valor de uma chamada depende das anteriores. A
+solução (`Mscdrun::finalpassa`, `mscdrunc.cpp`) calcula a geometria em
+paralelo, simula os dois caches em série com as regras originais (uma
+comparação por chamada) e calcula os valores em paralelo, cada thread montando
+o `rotmatb`/`hankarg` do estado que aquela chamada veria. `MSCD_FINALSERIAL=1`
+volta ao laço serial para comparação.
+
+### O que ficou de fora, e por quê
+
+- **`np>1` com a GPU.** Com o kernel antigo, `np=4` no ferro era ~4× mais lento
+  que `np=1` (processos disputando a placa em fatias de tempo). Com 5c, `np=2`
+  deu 60,3 s e `np=4` 57,8 s contra 77,0 s de `np=1`. Depois de 5e o caminho
+  certo é um processo só usando os núcleos por OpenMP.
+- **`onevenemit` na GPU.** Ele usa `acos`, `atan2`, `sin` e `cos` em `double`, e a
+  libm da CUDA não garante os bits da glibc. Quebraria o critério bit a bit.
+- **Eliminar o Reanalyzing.** No ferro os recomeços acontecem em `ia=118` e
+  `ia=313` de 367, então a dedup faz 2,17 passadas. O teto do ganho é ~1,2
+  passada (~5 s), menos o custo de prever o `nsymm`, que é a parte de maior
+  risco do roteiro do V2.
+
+### 5f a 5i. Mais quatro etapas, todas bit a bit
+
+- **5f. `allevendetec` com o fator por `ib`.** O `cxa` dele só depende de `ib`
+  (o `exp` em `double` usa `zb`, e o `ka` usa a posição de `ib`), e o kernel o
+  recalculava para cada um dos 367 `ia`. Um kernel pequeno calcula os 367
+  valores e outro aplica, coalescido. **0,40 → 0,13 ms por chamada.** A tentativa
+  anterior (16 threads por par com uma só fazendo o `exp`) piorou para 1,0 ms,
+  porque deixa o FP64 16 vezes menos paralelo. Ficou registrada como lição.
+- **5g. `algam` e índices pré-calculados por item.** `talpha`, `tgamma`, `p`,
+  `q`, `eegdim` e `mevadd` não mudam na corrida, então o `algam` de cada item e
+  os índices do `asum` e do `tevenelem` são calculados uma vez no setup (~50 MB
+  de VRAM). A cada chamada sobra `(al·asum)·te`, na mesma ordem. Fase dos
+  produtos do `m=2`, **4,46 → 2,07 s** nas 12000 chamadas.
+- **5h. Reanalyzing fora do caminho crítico.** Cada Reanalyzing do original é
+  uma passada do zero com `nsymm/2`, e a sequência de `nsymm` é conhecida de
+  antemão. As passadas candidatas agora rodam ao mesmo tempo, cada uma com seus
+  buffers (~660 MB cada no ferro), e vale a de menor índice que termina sem
+  estourar. Ela é a passada final do original, com o mesmo código e as mesmas
+  entradas. O log sai igual (as duas mensagens "Reanalyzing" e "Analyzed
+  symmetries for 3 times" no `mscdlist.txt`). Dedup **9,4 → 4,3 s**.
+  `MSCD_DEDUPSERIAL=1` volta ao laço original.
+- **5i. `pathcut` na GPU.** Thread por `(ib,ic)` e o laço de `ia` em série, na
+  mesma ordem da CPU. O `pow(xa,0.75)` em `double` do passo `m=2` fica no host,
+  porque a libm da CUDA não garante os bits da glibc. Na mesma janela (carregada)
+  o ferro deu 31,4 e 34,6 s contra 39,0 s com o `pathcut` em CPU.
+  `MSCD_PATHCUTCPU=1` força a CPU.
+
+Com isso o `Cov0.txt` foi para **~8 s** (referência 33,8 s) e o ferro para
+**24 a 31 s** conforme a carga da janela (referência 450,7 s).
+
+### 5j e 5k. O preparo serial caiu de ~24 s para ~5 s
+
+- **5j. `alltrievent(1)` em paralelo por cadeia.** A esquisitice descrita mais
+  abaixo acabou não sendo obstáculo. No caminho `forcut=1` o `precutable` fixa
+  `eledim=radim` para **todos** os trios, então o passo de linha é sempre o
+  mesmo, um trio `smear` só depende do anterior, e cada cadeia começa num trio
+  não-`smear` que não lê nada de fora. Só as cabeças de cadeia (~1% dos trios)
+  chamam o `evenelem`, que é onde estão os caches com história (`evenmat`,
+  `hanka`, `hankb`). Elas rodam em série, na ordem original. O resto roda em
+  paralelo por cadeia. **4,4 → 1,1 s.** `MSCD_ALLTRISERIAL=1` desliga.
+- **5k. Dedup do `symtrivert` totalmente paralela.** Relendo a fase B, o
+  resultado da dedup **não depende da ordem de inserção**. Cada balde vira a
+  lista ordenada por `(cosβ, 1/r₂, r₁)` das suas chaves distintas, o
+  `tevenadd` de cada trio é a posição da sua chave, e o representante é o trio
+  de menor índice. As chaves saem do `round`, que nunca devolve −0, então `==`
+  e bits coincidem. O estouro de balde acontece se e só se algum balde termina
+  com mais de `tscatter` chaves, porque a contagem só cresce. A dedup nova monta
+  em paralelo o conjunto das assinaturas `(search, r₁, 1/r₂, cosβ)`, que não
+  depende do `nsymm` (~3,5 milhões no ferro), escolhe o `nsymm` final sobre
+  esse conjunto com a mesma regra de halving, e indexa os 49 milhões de trios
+  em paralelo, com `min` atômico para o representante. O guarda
+  `j*3+2<mscatter` do original só bloqueia no último balde, e ali o original
+  termina em erro 621, o que é reproduzido. `symtrivert` **10,7 → 1,6 s**,
+  com o `mscdlist.txt` igual (análises, `nsymm`, `ntrieven`, `nscorse`) e as
+  mensagens de Reanalyzing no log. **O Reanalyzing deixou de ser uma passada
+  sobre os trios.** `MSCD_DEDUPCAND=1` usa as candidatas de 5h, e
+  `MSCD_DEDUPSERIAL=1` o laço original.
+
+As etapas 5h, 5j e 5k só ligam com `MSCD_GPU`. Sem a variável o caminho de CPU
+é o original, e o `randmscd_parallel` novo sai bit a bit igual à referência de
+CPU congelada (`gw/ref_cpu`), verificado de novo depois de 5k.
+
+**Estado depois de 5k**, com carga 4 e `np=1`. Ferro **20,6 a 22,7 s** (referência
+450,7 s, ~21×), `Cov0.txt` **7,3 s** (referência 33,8 s, 4,6×). O preparo
+serial do ferro é ~5 s e o laço ~15 s.
+
+### 5l e 5m. A soma em ordem e o encadeamento das chamadas
+
+- **5l. A soma em ordem do `summation` (fase 2 de 5b).** Era metade do tempo de
+  GPU, e a do `m=2` levava 0,28 ms por chamada. Três coisas, todas mantendo a
+  ordem das adições. (1) Os pares com mais de 400 slots usam um bloco de 256
+  threads cada, que carrega pedaços de 128 slots para a memória compartilhada
+  enquanto as 16 threads de `j` somam dali, com buffer duplo e warps
+  especializados. (2) As leituras de cada pedaço vão primeiro para
+  registradores e só depois para a memória compartilhada. O laço "lê e grava"
+  fazia cada thread esperar a L2 em série, e era isso que segurava a cadeia, não
+  a cadeia em si. (3) Pares pesados e leves no mesmo kernel, os pesados nos
+  primeiros blocos, para os leves preencherem a placa em volta. Só vale nos
+  passos de `m` cujo par mais pesado passa de 1000 slots (no ferro, só o
+  `m=2`). Soma do `m=2` **3,37 → 1,51 s** nas 12000 chamadas.
+  `MSCD_ACCOLD=1` volta ao kernel de 5b, `MSCD_ACCTHR=n` muda o limiar.
+- **5m. Chamadas encadeadas.** O laço dos pontos passou a ser lança a placa
+  para a chamada `c`, termina e soma `c−1`, faz o passe A de `c` na CPU. A placa
+  recebe `c` antes de `c−1` terminar e não fica parada nas somas finais nem na
+  preparação da chamada seguinte. Quem mexe nos caches com história (o passe A
+  e o reset do `hankb` no início de cada ponto) roda na mesma ordem do laço
+  original, e as somas de cada ponto também. Dois buffers de saída alternados, e
+  o `cudaMemcpy` síncrono do `hankb` só acontece quando o conteúdo muda (na
+  prática, uma vez). Na mesma janela, 19,8 e 20,5 s contra 22,2 e 26,6 s sem o
+  encadeamento. `MSCD_NOPIPE=1` desliga. O build `-DMSCDTIMER` e o
+  `MSCD_GPUPROF` desligam sozinhos, para os cronômetros continuarem valendo.
+
+Com o encadeamento a placa fica a **2535 MHz e 80 a 84% de uso durante o
+laço**, ~50 W (medido com `nvidia-smi` a cada segundo). Antes da Fase 5 ela
+ficava abaixo de 1%.
+
+### Estado depois de 5m
+
+| | referência (antes da Fase 5) | depois de 5m |
+|---|---:|---:|
+| `1x2iron.in`, 367 átomos, 2400 pontos | 450,7 s | **16,4 a 25,7 s** |
+| `Cov0.txt`, 247 átomos, 779 pontos | 33,8 s | **5,3 a 9,7 s** |
+
+Tudo em `np=1`, saída bit a bit igual à da referência. **A faixa larga é a
+máquina, não o programa.** O protetor de tela do Omarchy (dois `foot` e um
+`ttfx` a 120 quadros por segundo, relançado o tempo todo) ficou ligado quase a
+sessão inteira, com carga de 2 a 11. O valor baixo de cada faixa é o de janela
+mais leve. Uma campanha a frio, com o protetor desligado, ainda está por fazer.
+O preparo do ferro ficou em ~5 s (até ~8 s com carga) e o laço em ~11 a 16 s.
+
+### Chaves de ambiente da Fase 5
+
+Todas só valem com `MSCD_GPU=1`, e todas existem para comparar A/B no mesmo
+binário e na mesma janela.
+
+| chave | o que faz |
+|---|---|
+| `MSCD_GPUPROF=1` | tempo de GPU por trecho (eventos CUDA) e das fases do bloco final, a cada 2000 chamadas |
+| `MSCD_NOPIPE=1` | desliga o encadeamento (5m) |
+| `MSCD_FINALSERIAL=1` | bloco final serial, sem a simulação dos caches (5e) |
+| `MSCD_ACCOLD=1`, `MSCD_ACCTHR=n` | kernel de soma de 5b, ou outro limiar para o de 5l |
+| `MSCD_PATHCUTCPU=1` | `pathcut` na CPU (5i) |
+| `MSCD_ALLTRISERIAL=1` | `alltrievent(1)` serial (5j) |
+| `MSCD_DEDUPCAND=1`, `MSCD_DEDUPSERIAL=1` | dedup por candidatas (5h) ou o laço original |
+
+### Como foi validado
+
+O binário de GPU anterior à Fase 5 e o de CPU foram congelados em
+`gw/ref_gpu` e `gw/ref_cpu`, e as saídas deles nos dois inputs ficaram em
+`gw/*_refgpu.out` e `gw/*_refcpu.out`. Cada etapa foi aceita só com a saída do
+binário novo **bit a bit igual** à `gw/*_refgpu.out` nos dois inputs (o
+`cmp` ignora só as linhas de data). O R-factor sai igual por consequência. O
+caminho de CPU foi conferido contra `gw/ref_cpu` depois de 5e e de 5k. E a
+GPU continua a `max|Δχ| = 1,0×10⁻⁵` do CPU, o mesmo piso de ruído da Fase 3.
+
+**Uma armadilha achada no caminho.** Num teste, o kernel de pré-cálculo de 5g
+rodou antes de os trios subirem para a placa e deu acesso ilegal. O programa
+**não parou**. Terminou "normalmente" com R-factor 1,0000 e −1,0000 e a curva
+zerada. Uma falha de GPU no setup vira saída plausível em vez de erro. Antes de
+confiar numa corrida de GPU, olhe o `stderr` e o R-factor.
+
+**Uma esquisitice do original no `alltrievent`** (que acabou não barrando 5j). No
+caminho `forcut=1`, os trios `smear` (99% deles) leem `tempeven[radim²]`, que
+nunca é gravado. Só é determinístico porque o construtor de `Fcomplex` zera a
+memória. E a segunda metade do `tempeven` guarda valores de trios anteriores com
+passo de linha diferente quando o `eledim` diminui, o que cria dependência entre
+cadeias de trios. Paralelizar exigiria rastrear o último escritor de cada
+índice. Não foi feito.
+
+### Onde estava o tempo depois de 5e (perfil, `np=1`, janela carregada)
+
+Preparo serial ~24 s (`symtrivert` 10,8 s, `alltrievent` 5,6 s, `pathcut`
+4,2 s), laço ~24 s (`onevenemit` paralelo 9,0 s, `allevendetec` 6,8 s, espera
+da placa 3,9 s, somas finais 1,6 s). **O preparo serial passou a ser metade do
+tempo.**
+
+
+## Fase 6, varredura (08/10/2026)
+
+Pedido do usuário depois de rodar um `Cov0.txt` com **963 átomos**. O preparo
+levava a maior parte do tempo, e a suspeita era o Reanalyzing. O perfil mostrou
+outra coisa. Critério igual ao da Fase 5 (saída **bit a bit** igual), agora em
+três casos (`Cov0.txt` de 247 átomos, ferro de 367 e o de 963), comparando
+também o log da tela. Cada etapa só liga com `MSCD_GPU` e tem chave para
+desligar. A lista arquivo por arquivo fica em `gw/varredura.md`.
+
+| etapa | 963 átomos, `np=1` |
+|---|---:|
+| partida | 310 s |
+| `symdblvert` com hash (era busca linear, 237 s) | 70 s |
+| estatísticas do `precutable` em paralelo, `allrotation` em paralelo | ~63 s |
+| sem as tabelas `talpha`/`tgamma` (rotação sob demanda) | 51,0 s |
+| dedup do `symtrivert` por tabela direta | 38,3 s |
+| estatísticas numa varredura contígua | 28,8 s |
+| `pathcut` com registro por trio | 25,5 s |
+| `allevendetec` e `alldblevent` só no conjunto `U` (0,9% das posições) | 19,8 s |
+| Euler pré-calculado, somas finais inline | 18,3 s |
+| `round` inline na dedup, sem zerar o `tevendim` no host | 16,9 s |
+| descer do `tevendim` só as linhas usadas, inline nas cadeias | **15,5 s** |
+
+Ferro (367 átomos) **9,8 s** e `Cov0.txt` (247 átomos) **3,8 s** na mesma
+série final, contra 450,7 s e 33,8 s antes da Fase 5. Os três casos saem bit
+a bit iguais à referência, saída e log da tela, e o binário de CPU continua
+bit a bit igual ao de antes.
+
+- **`symdblvert`** (`MSCD_DBLSERIAL=1` desliga). Para cada par, uma busca
+  linear por todos os pares distintos já vistos. Com 247 átomos levava 1 s e
+  ninguém notou. Com 963, **237 s**, mais que o cálculo inteiro. Virou tabela
+  hash com a mesma ordem de inserção, 0,04 s. Era o gargalo que parecia ser o
+  Reanalyzing, porque o programa não imprime nada entre a última mensagem de
+  Reanalyzing e o laço dos pontos.
+- **Estatísticas do `precutable`** (`MSCD_STATSERIAL=1`). Contam trios num
+  `float` somando `1.0f`, o que para de andar em 2²⁴. O resultado é
+  `min(contagem, 2²⁴)`, calculado com inteiros. O máximo de `eledim` por trio
+  não depende da ordem. O laço original ainda saltava `natoms²` a cada passo e
+  repetia a varredura para cada `m`. Agora é uma varredura contígua só,
+  **10 s → 0,05 s**.
+- **`talpha`/`tgamma`** (`MSCD_ROTFULL=1`). Duas tabelas `natoms³` de 3,6 GB
+  cada com 963 átomos, das quais o modo GPU só lê os trios com `evedim>1`. A
+  montagem das listas pede a rotação de cada um a `Mscdrun::rotfor`, com a
+  regra do `allrotation`. O pico de memória caiu de **13,2 GB para 8,2 GB** e
+  a corrida parou de usar swap (falhas de página com disco de 16 193 para 1).
+  Só com `np=1` e fora do modo `validate`.
+- **Dedup por tabela direta** (`MSCD_DEDUPHASH=1` volta ao hash de 5k). As
+  quatro chaves da assinatura são `k·passo` com `k` inteiro, então endereçam
+  uma tabela direta, e a fatia de um par `(ia,ib)` cabe no L1. O `float`
+  reconstruído do índice é conferido como idêntico ao calculado, e qualquer
+  falha volta ao hash. `symtrivert` **18 → 7 s**.
+- **`pathcut`**. Um registro de 32 bytes por trio distinto com tudo que o
+  laço lê, no lugar das ~6 leituras espalhadas em `tevenpar` e `tevenelem`.
+- **Conjunto `U`** (`MSCD_FULLMAT=1` desliga). O `summation` só lê três
+  tipos de posição das matrizes `natoms²`, os pares sobreviventes, os pares
+  `(ib,ic)` dos trios e as linhas dos emissores. Com 963 átomos são 7 941 de
+  926 406 posições, e o `alldblevent` só precisa de 5 205 dos 515 782 pares
+  distintos. Os dois kernels passaram a calcular só esses, e o `allevendetec`
+  já grava direto no `asum`, o que tirou o kernel de inicialização.
+- **Contas fora de linha.** Os operadores de `Fcomplex` (`fcomplex.cpp`), o
+  `Expix::fexpix` (`msfuncs.cpp`) e o `round` (`userutil.cpp`) ficam em outras
+  unidades de compilação e viravam chamadas de função nos laços quentes. Foram
+  copiados inline, com as mesmas expressões, nas somas finais, nos valores do
+  bloco final, nas cadeias do `alltrievent` e na assinatura da dedup. Sem
+  `-ffast-math` e sem FMA (x86-64 base) o compilador não reassocia, então os
+  bits são os mesmos. O ganho foi grande na dedup e pequeno no resto.
+- **Euler** (`MSCD_EULERFULL=1`). O `Cartesia::euler` recalculava seis senos
+  e cossenos a cada chamada, e o `onevenemit` o chamava três vezes por trio com
+  os mesmos ângulos (a terceira igual à primeira). Os nove coeficientes saem
+  uma vez por chamada.
+- **`tevendim` no host** (`MSCD_ZEROALL=1`, `MSCD_DIMFULL=1`). Com o
+  `pathcut` na GPU, o host não zera mais a tabela (3,6 GB) e só desce as linhas
+  `(ia,ib)` com algum `tevencut`, as únicas que ele lê com `np=1`.
+
+**Busca linear, varredura completa.** As que importavam eram a do
+`symdblvert` (corrigida) e as da dedup (corrigidas na Fase 5 e aqui). As
+restantes são a do `makeatoms` (≤1250 átomos, com tolerância e dependente da
+ordem, milissegundos) e as de `phase.cpp`, `radmat.cpp` e `pdintena.cpp`
+(tabelas pequenas, poucas chamadas). A lista arquivo por arquivo, com o
+método usado em cada um, está em `gw/varredura.md`.
+
+**O que sobra com 963 átomos (15,5 s).** Dedup 4,1 s (a assinatura de 893
+milhões de trios, limitada por conta), `pathcut` 2,4 s (subida de 3,6 GB e
+leituras aleatórias no kernel), `alltrievent` 1,3 a 1,6 s e o laço 5,1 s (o
+bloco final na CPU, com geometria em `double`). Nenhum é busca linear. A
+memória de pico é ~8 GB, dominada por `tevenadd` e `tevendim` (3,6 GB cada).

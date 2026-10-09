@@ -90,6 +90,10 @@ class Mscdrun
     Pdintensity *pdintensity;
     Jobtime *jobtime;
   public:
+    /* Fase 6: rotacao de um trio com a regra do allrotation, para quem nao
+       guarda as tabelas talpha/tgamma inteiras. Ver mscdrunc.cpp. */
+    void rotfor(int ia,int ib,int ic,float *alpha,float *gamma);
+    int skiprot();
     Mscdrun(int imype,int inumpe);
     ~Mscdrun();
     void init();
@@ -138,6 +142,7 @@ class Mscdrun
     Fcomplex evenbelem(int alf,int ma,int na,int mb,int nb,
       float vkb,float beta);
     int alltrievent(int forcut,float akin);
+    int alltrievent_par1(float akin);
     int onerotation(float *patoma,float *patomb,float *patomc,
       float *alpha,float *beta,float *gamma);
     int alldblevent(float akin,float *xdetec);
@@ -149,6 +154,20 @@ class Mscdrun
       float *xdetec,float *polaron,Fcomplex *aemitelem);
     Fcomplex onemidetec(float akin,int ie,int alf,int am,
       float *xdetec,float *polaron);
+    /* Bloco final do summation em paralelo (08/10/2026), mscdrunc.cpp. */
+    int onevenemit_geo(int ia,int ib,float akin,float *xdetec,
+      float *polaron,float *g,const float *eu);
+    Fcomplex evenbelemb(int alf,int ma,int na,int mb,int nb,
+      const float *rotb,float rbeta,const Fcomplex *harg,float hval);
+    void onevenemit_val(int ia,int ib,int alf,int am,const float *g,
+      const float *rotb,float rbeta,const Fcomplex *harg,float hval,
+      Fcomplex *aemitelem);
+    int finalpassa(float akin,float *xdetec,float *polaron,
+      Fcomplex *ebuf,Fcomplex *cbuf);
+    int sumgpu_cpua(float akin,float *xdetec,float *polaron,
+      Fcomplex *csum,int set);
+    int sumgpu_passb(int set,float *suminten,float *bakinten,
+      Fcomplex *asum);
     Fcomplex matrixelement(int ali,int alf,int am,float akin);
     int allrotation();
     int summation(float akin,float *xdetec,float *polaron,

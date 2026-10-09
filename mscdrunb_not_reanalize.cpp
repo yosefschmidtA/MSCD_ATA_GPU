@@ -4,6 +4,9 @@ using namespace std;
 #include <iomanip>
 #include <cmath>
 #include <algorithm>
+#include <new>
+#include <stdlib.h>
+#include <string.h>
 
 #include "cartesia.h"
 #include "phase.h"
@@ -383,6 +386,644 @@ static unsigned int mscd_chave(float a,float b,float c,int m)
   return mscd_mistura(h^(unsigned int)m);
 }
 
+
+/* ============ Reanalyzing fora do caminho critico (08/10/2026) ============
+   Cada "Reanalyzing" do original e' uma passada DO ZERO com nsymm/2 (e, se
+   nsymm<10, mscatter*3/2). A sequencia de (nsymm,mscatter) e' conhecida de
+   antemao, entao as passadas candidatas podem rodar ao mesmo tempo, cada uma
+   com seus buffers. Vale a de menor indice que termina sem estourar -- essa
+   e' exatamente a passada final do original, com o mesmo codigo e as mesmas
+   entradas, entao tevenadd, tempar, tempadd e origem saem bit a bit iguais.
+   As de indice maior sao canceladas quando ela termina. No 1x2iron.in
+   (367 atomos) os estouros eram em ia=118 e ia=313: 2,17 passadas viram ~1.
+   MSCD_DEDUPSERIAL=1 volta ao laco original. */
+struct MscdPass
+{ int nsymm,mscatter,tscatter,nslot,status,stopia;
+  float awidth,astep;
+  int *tempadd,*origem,*destino,*tevenadd,*htab;
+  float *tempar;
+  MscdTri *ordbuf;
+};
+
+static void mscd_pass_free(MscdPass *P)
+{ delete [] P->tempadd; delete [] P->origem; delete [] P->destino;
+  delete [] P->tevenadd; delete [] P->htab; delete [] P->tempar;
+  delete [] P->ordbuf;
+  P->tempadd=P->origem=P->destino=P->tevenadd=P->htab=NULL;
+  P->tempar=NULL; P->ordbuf=NULL;
+}
+
+/* status: 0 completou, 1 estourou um balde, 2 sem memoria, 3 cancelada.
+   *vencedor e' o menor indice que ja completou; quem tem indice maior para. */
+static void mscd_pass_run(MscdPass *P,int meu,volatile int *vencedor,
+  const float *patom,int natoms,int msorder,float vlenc,float nearest,
+  int katoms)
+{ int ia,ib,ic,j,m,n,slot,nsymm,tscatter,mscatter;
+  float xa,ya,za,xb,yb,zb,lena,lenb,vlenb,cosbeta,akind,search,awidth,astep;
+  unsigned int h,hsize,hmask;
+
+  nsymm=P->nsymm; mscatter=P->mscatter;
+  tscatter=mscatter/nsymm/3;
+  awidth=round(1.0f/nearest,vlenc)+2.01f;
+  astep=(nsymm-1.0f)/(katoms*awidth);
+  P->tscatter=tscatter; P->awidth=awidth; P->astep=astep;
+  P->nslot=nsymm*tscatter+1;
+  hsize=1024; while ((int)hsize<=P->nslot) hsize<<=1;
+  hmask=hsize-1;
+  P->tempadd=new (std::nothrow) int [nsymm];
+  P->tempar=new (std::nothrow) float [mscatter];
+  P->origem=new (std::nothrow) int [P->nslot];
+  P->destino=new (std::nothrow) int [P->nslot];
+  P->htab=new (std::nothrow) int [hsize];
+  P->ordbuf=new (std::nothrow) MscdTri [tscatter+2];
+  P->tevenadd=new (std::nothrow) int [natoms*natoms*natoms];
+  if ((!P->tempadd)||(!P->tempar)||(!P->origem)||(!P->destino)||
+    (!P->htab)||(!P->ordbuf)||(!P->tevenadd))
+  { P->status=2; return;
+  }
+  int *tempadd=P->tempadd,*origem=P->origem,*htab=P->htab;
+  int *tevenadd=P->tevenadd;
+  float *tempar=P->tempar;
+  for (j=0;j<nsymm;++j) tempadd[j]=0;
+  for (j=0;j<P->nslot;++j) P->destino[j]=-1;
+  for (h=0;h<hsize;++h) htab[h]=-1;
+
+  for (ia=0;ia<natoms;++ia)
+  { if (*vencedor<meu) { P->status=3; P->stopia=ia; return; }
+    if ((msorder==2)&&(patom[ia*12+7]==0)) continue;
+    for (ib=0;ib<natoms;++ib)
+    { if (ib==ia) continue;
+      xa=patom[ib*12]-patom[ia*12]; ya=patom[ib*12+1]-patom[ia*12+1];
+      za=patom[ib*12+2]-patom[ia*12+2];
+      lena=(float)sqrt(xa*xa+ya*ya+za*za);
+      akind=patom[ib*12+6]; lena=round(lena,0.005f);
+      for (ic=0;ic<natoms;++ic)
+      { if (ic==ib) continue;
+        xb=patom[ic*12]-patom[ib*12];
+        yb=patom[ic*12+1]-patom[ib*12+1];
+        zb=patom[ic*12+2]-patom[ib*12+2];
+        lenb=(float)sqrt(xb*xb+yb*yb+zb*zb);
+        cosbeta=(xb*xa+yb*ya+zb*za)/(lena*lenb);
+
+        vlenb=round(1.0f/lenb,vlenc);
+        cosbeta=round(cosbeta,0.005f);
+        search=(float)((akind-1.0)*awidth+vlenb+cosbeta+1.005);
+        search=round(search,0.005f);
+        m=(int)(search*astep)+1;
+        if (m<1) m=1; else if (m>nsymm-1) m=nsymm-1;
+        n=m*tscatter;
+        slot=-1;
+        h=mscd_chave(lena,vlenb,cosbeta,m)&hmask;
+        while (htab[h]>=0)
+        { j=htab[h];
+          if ((j/tscatter==m)&&(lena==tempar[j*3])&&
+            (vlenb==tempar[j*3+1])&&(cosbeta==tempar[j*3+2]))
+          { slot=j; break;
+          }
+          h=(h+1)&hmask;
+        }
+        if (slot<0)
+        { j=n+tempadd[m];
+          if (j*3+2<mscatter)
+          { tempar[j*3]=lena; tempar[j*3+1]=vlenb;
+            tempar[j*3+2]=cosbeta;
+            origem[j]=j; slot=j;
+            htab[h]=j;
+            ++tempadd[m];
+          }
+        }
+        tevenadd[ia*natoms*natoms+ib*natoms+ic]=slot;
+        if (tempadd[m]>tscatter)
+        { P->status=1; P->stopia=ia; return;
+        }
+      }
+    }
+  }
+  P->status=0; P->stopia=natoms;
+}
+
+
+/* ================= dedup em paralelo (08/10/2026) =================
+   O resultado da dedup NAO depende da ordem de insercao: a fase B ordena
+   cada balde por (cosbeta, 1/r2, r1) e emite as chaves distintas nessa
+   ordem, baldes em ordem crescente de m; tevenadd de cada trio e' a posicao
+   da sua chave nessa lista; e o representante (tevenpar 4,7,8,9) e' o
+   primeiro trio na ordem (ia,ib,ic), ou seja, o de menor indice. As tres
+   chaves vem de round(), que nunca devolve -0, entao "==" e bits coincidem.
+   O estouro de balde (Reanalyzing) acontece se e so' se algum balde termina
+   com mais de tscatter chaves distintas -- a contagem so' cresce. Entao:
+     1. em paralelo, o conjunto S das assinaturas (search,r1,1/r2,cosbeta),
+        que nao depende de nsymm;
+     2. em serie, sobre S (~3,5 milhoes, nao 49 milhoes de trios), a mesma
+        sequencia de nsymm do original ate o primeiro sem estouro;
+     3. em paralelo, o indice final de cada trio e o representante (min).
+   O guarda j*3+2<mscatter do original so' bloqueia no ultimo balde, e ali
+   o original termina em erro 621; isso e' reproduzido. MSCD_DEDUPSERIAL=1
+   volta ao laco serial. */
+#include <vector>
+#include <parallel/algorithm>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+namespace {
+struct SKey { float s,l,v,c; };
+struct DKey { float l,v,c; int m; };
+inline unsigned int fbits(float f) { union { float f; unsigned int u; } x; x.f=f; return x.u; }
+inline unsigned int skh(const SKey &k) { return mscd_chave(k.l,k.v,k.c,(int)fbits(k.s)); }
+inline unsigned int dkh(const DKey &k) { return mscd_chave(k.l,k.v,k.c,k.m); }
+inline bool skeq(const SKey &a,const SKey &b)
+{ return (a.s==b.s)&&(a.l==b.l)&&(a.v==b.v)&&(a.c==b.c); }
+inline bool dkeq(const DKey &a,const DKey &b)
+{ return (a.m==b.m)&&(a.l==b.l)&&(a.v==b.v)&&(a.c==b.c); }
+struct DLess
+{ bool operator()(const DKey &a,const DKey &b) const
+  { if (a.m!=b.m) return a.m<b.m;
+    if (a.c!=b.c) return a.c<b.c;
+    if (a.v!=b.v) return a.v<b.v;
+    return a.l<b.l;
+  }
+};
+struct SSet
+{ std::vector<SKey> e; std::vector<int> tab; unsigned int mask;
+  void init(int cap) { tab.assign(cap,-1); mask=cap-1; e.clear(); }
+  void grow()
+  { std::vector<int> nt(tab.size()*2,-1); unsigned int nm=nt.size()-1;
+    for (size_t i=0;i<e.size();++i)
+    { unsigned int p=skh(e[i])&nm;
+      while (nt[p]>=0) p=(p+1)&nm;
+      nt[p]=(int)i;
+    }
+    tab.swap(nt); mask=nm;
+  }
+  void insert(const SKey &k,unsigned int h)
+  { if ((e.size()+1)*2>tab.size()) grow();
+    unsigned int p=h&mask;
+    while (tab[p]>=0)
+    { if (skeq(e[tab[p]],k)) return;
+      p=(p+1)&mask;
+    }
+    tab[p]=(int)e.size(); e.push_back(k);
+  }
+};
+/* a assinatura de um trio, com as expressoes de mscd_pass_run */
+/* Fase 6: copia de round() e confine() de userutil.cpp, para o compilador
+   poder expandir inline (a assinatura chama round 3 vezes por trio, e sao
+   893 milhoes de trios com 963 atomos). Mesmas expressoes, mesmos bits. */
+inline float mscd_round(float xa,float decimal)
+{ int k;
+  float xb;
+  if (decimal<0.0) decimal=-decimal;
+  xb=decimal;
+  if (xb<1.0e-10f) xb=1.0e-10f;
+  else if (xb>1.0e10f) xb=1.0e10f;
+  if (xa>=0.0) k=(int)(xa/xb+0.5);
+  else k=(int)(xa/xb-0.5);
+  xa=k*xb;
+  return(xa);
+}
+inline SKey mscd_sig(const float *patom,int ia,int ib,int ic,float lena,
+  float xa,float ya,float za,float akind,float awidth,float vlenc)
+{ float xb,yb,zb,lenb,cosbeta,vlenb,search;
+  SKey k;
+  xb=patom[ic*12]-patom[ib*12];
+  yb=patom[ic*12+1]-patom[ib*12+1];
+  zb=patom[ic*12+2]-patom[ib*12+2];
+  lenb=(float)sqrt(xb*xb+yb*yb+zb*zb);
+  cosbeta=(xb*xa+yb*ya+zb*za)/(lena*lenb);
+  vlenb=mscd_round(1.0f/lenb,vlenc);
+  cosbeta=mscd_round(cosbeta,0.005f);
+  search=(float)((akind-1.0)*awidth+vlenb+cosbeta+1.005);
+  search=mscd_round(search,0.005f);
+  (void)ia;
+  k.s=search; k.l=lena; k.v=vlenb; k.c=cosbeta;
+  return k;
+}
+}
+static int mscd_dedup_par(const float *patom,int natoms,int msorder,
+  float vlenc,float nearest,int katoms,int *pnsymm,int *pmscatter,
+  int *ptscatter,int *panalyze,int **ptempadd,int **ptevenadd,
+  float **ptevenpar,int *pntrieven)
+{ int nthr=1,NS=64,win=-1,cn,cm,tsc=0,i;
+  float awidth=round(1.0f/nearest,vlenc)+2.01f;
+#ifdef _OPENMP
+  nthr=omp_get_max_threads();
+#endif
+#ifdef MSCDTIMER
+  double dt0=omp_get_wtime();
+#define DEDUPT(nome) do { double t_=omp_get_wtime(); fprintf(stderr,"[dedup] %-28s %7.3f s\n",nome,t_-dt0); dt0=t_; } while (0)
+#else
+#define DEDUPT(nome)
+#endif
+  /* 1. S, com tabelas locais por thread em NS fatias pelo hash */
+  std::vector<SSet> loc((size_t)nthr*NS);
+  for (i=0;i<nthr*NS;++i) loc[i].init(1024);
+#ifdef _OPENMP
+#pragma omp parallel num_threads(nthr)
+#endif
+  { int t=0,ia,ib,ic;
+#ifdef _OPENMP
+    t=omp_get_thread_num();
+#pragma omp for schedule(dynamic,1)
+#endif
+    for (ia=0;ia<natoms;++ia)
+    { if ((msorder==2)&&(patom[ia*12+7]==0)) continue;
+      for (ib=0;ib<natoms;++ib)
+      { if (ib==ia) continue;
+        float xa=patom[ib*12]-patom[ia*12], ya=patom[ib*12+1]-patom[ia*12+1];
+        float za=patom[ib*12+2]-patom[ia*12+2];
+        float lena=(float)sqrt(xa*xa+ya*ya+za*za);
+        float akind=patom[ib*12+6]; lena=round(lena,0.005f);
+        for (ic=0;ic<natoms;++ic)
+        { if (ic==ib) continue;
+          SKey k=mscd_sig(patom,ia,ib,ic,lena,xa,ya,za,akind,awidth,vlenc);
+          unsigned int h=skh(k);
+          loc[(size_t)t*NS+((h>>26)%NS)].insert(k,h);
+        }
+      }
+    }
+  }
+  DEDUPT("1a assinaturas (local)");
+  std::vector<SSet> sh(NS);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic,1) num_threads(nthr)
+#endif
+  for (i=0;i<NS;++i)
+  { sh[i].init(1024);
+    for (int t=0;t<nthr;++t)
+    { SSet &L=loc[(size_t)t*NS+i];
+      for (size_t q=0;q<L.e.size();++q) sh[i].insert(L.e[q],skh(L.e[q]));
+    }
+  }
+  std::vector<SSet>().swap(loc);
+  std::vector<SKey> S;
+  for (i=0;i<NS;++i) S.insert(S.end(),sh[i].e.begin(),sh[i].e.end());
+  std::vector<SSet>().swap(sh);
+  DEDUPT("1b uniao das fatias");
+
+  /* 2. o nsymm final, com a regra do original */
+  std::vector<DKey> D;
+  int analyze=0;
+  cn=*pnsymm; cm=*pmscatter;
+  while (win<0)
+  { if (cn<2) return(621);
+    ++analyze;
+    tsc=cm/cn/3;
+    float astep=(cn-1.0f)/(katoms*awidth);
+    D.resize(S.size());
+    long ns=(long)S.size(),q;
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(nthr)
+#endif
+    for (q=0;q<ns;++q)
+    { int m=(int)(S[q].s*astep)+1;
+      if (m<1) m=1; else if (m>cn-1) m=cn-1;
+      D[q].l=S[q].l; D[q].v=S[q].v; D[q].c=S[q].c; D[q].m=m;
+    }
+    __gnu_parallel::sort(D.begin(),D.end(),DLess());
+    size_t u=0;
+    for (size_t r=0;r<D.size();++r)
+      if ((u==0)||!dkeq(D[u-1],D[r])) D[u++]=D[r];
+    D.resize(u);
+    std::vector<int> cnt(cn,0);
+    for (size_t r=0;r<D.size();++r) ++cnt[D[r].m];
+    int over=0,lastover=0;
+    for (int m=1;m<cn;++m)
+      if (cnt[m]>tsc) { if (m<cn-1) over=1; else lastover=1; }
+    if ((!over)&&lastover)
+    { /* so' o ultimo balde estoura: o original insere se o guarda deixar */
+      if ((long)cn*tsc*3+2<cm) over=1;
+      else return(621);
+    }
+    if (!over) { win=1; break; }
+    if ((cn<10)&&(cm<=5*natoms*natoms*natoms)) cm=cm*3/2;
+    cn/=2;
+  }
+  std::vector<SKey>().swap(S);
+  DEDUPT("2 escolha do nsymm");
+
+  /* tabela DKey -> indice final */
+  int nd=(int)D.size();
+  unsigned int hs=1024; while (hs<=(unsigned int)nd*2u) hs<<=1;
+  unsigned int hm=hs-1;
+  std::vector<int> dt(hs,-1);
+  for (int j=0;j<nd;++j)
+  { unsigned int p=dkh(D[j])&hm;
+    while (dt[p]>=0) p=(p+1)&hm;
+    dt[p]=j;
+  }
+
+  /* 3. indice de cada trio e representante (menor indice de trio) */
+  int *tevenadd=new (std::nothrow) int [natoms*natoms*natoms];
+  int *first=new (std::nothrow) int [nd>0?nd:1];
+  if ((!tevenadd)||(!first)) { delete [] tevenadd; delete [] first; return(102); }
+  for (int j=0;j<nd;++j) first[j]=0x7fffffff;
+  float astep=(cn-1.0f)/(katoms*awidth);
+  volatile int bad=0;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic,1) num_threads(nthr)
+#endif
+  for (int ia=0;ia<natoms;++ia)
+  { if ((msorder==2)&&(patom[ia*12+7]==0)) continue;
+    for (int ib=0;ib<natoms;++ib)
+    { if (ib==ia) continue;
+      float xa=patom[ib*12]-patom[ia*12], ya=patom[ib*12+1]-patom[ia*12+1];
+      float za=patom[ib*12+2]-patom[ia*12+2];
+      float lena=(float)sqrt(xa*xa+ya*ya+za*za);
+      float akind=patom[ib*12+6]; lena=round(lena,0.005f);
+      for (int ic=0;ic<natoms;++ic)
+      { if (ic==ib) continue;
+        SKey k=mscd_sig(patom,ia,ib,ic,lena,xa,ya,za,akind,awidth,vlenc);
+        DKey d; d.l=k.l; d.v=k.v; d.c=k.c;
+        d.m=(int)(k.s*astep)+1;
+        if (d.m<1) d.m=1; else if (d.m>cn-1) d.m=cn-1;
+        unsigned int p=dkh(d)&hm;
+        int j=-1;
+        while (dt[p]>=0)
+        { if (dkeq(D[dt[p]],d)) { j=dt[p]; break; }
+          p=(p+1)&hm;
+        }
+        int n=ia*natoms*natoms+ib*natoms+ic;
+        tevenadd[n]=j;
+        if (j<0) { bad=1; continue; }
+        int old=first[j];
+        while (n<old)
+        { int got=__sync_val_compare_and_swap(&first[j],old,n);
+          if (got==old) break;
+          old=got;
+        }
+      }
+    }
+  }
+  DEDUPT("3 indice de cada trio");
+  if (bad) { delete [] tevenadd; delete [] first; return(621); }
+
+  float *tevenpar=new (std::nothrow) float [(long)nd*10];
+  int *tempadd=new (std::nothrow) int [cn];
+  if ((!tevenpar)||(!tempadd))
+  { delete [] tevenadd; delete [] first; delete [] tevenpar; delete [] tempadd;
+    return(102);
+  }
+  for (int j=0;j<nd;++j)
+  { int n=first[j],ia=n/(natoms*natoms),ib=(n/natoms)%natoms,ic=n%natoms;
+    tevenpar[j*10]=D[j].l;
+    tevenpar[j*10+1]=round(1.0f/D[j].l,vlenc);
+    tevenpar[j*10+2]=D[j].v;
+    tevenpar[j*10+3]=D[j].c;
+    for (int k=4;k<10;++k) tevenpar[j*10+k]=0.0f;
+    tevenpar[j*10+4]=patom[ib*12+6];
+    tevenpar[j*10+7]=(float)ia;
+    tevenpar[j*10+8]=(float)ib; tevenpar[j*10+9]=(float)ic;
+  }
+  for (int m=0;m<cn;++m) tempadd[m]=0;
+  { int k=0; size_t r=0;
+    for (int m=1;m<cn;++m)
+    { while ((r<D.size())&&(D[r].m==m)) { ++k; ++r; }
+      tempadd[m]=k;
+    }
+  }
+  delete [] first;
+  *pnsymm=cn; *pmscatter=cm; *ptscatter=tsc; *panalyze=analyze;
+  *ptempadd=tempadd; *ptevenadd=tevenadd; *ptevenpar=tevenpar; *pntrieven=nd;
+  return(0);
+}
+
+
+/* ============ dedup por tabela direta (Fase 6, 08/10/2026) ============
+   A assinatura de um trio sao quatro numeros quantizados por round():
+   r1 (passo 0,005), a especie de ib, 1/r2 (passo vlenc) e cosbeta (passo
+   0,005). round() devolve k*passo com k inteiro, entao cada um vira um
+   indice inteiro, e o float reconstruido do indice e' conferido como
+   IDENTICO ao calculado -- se algum trio falhar, devolve -1 e quem chama usa
+   mscd_dedup_par (hash). A tabela direta troca as sondas de hash espalhadas
+   por uma fatia de ~8 KB por par (ia,ib), que fica no cache. O conjunto, a
+   escolha do nsymm e os indices finais sao os mesmos de mscd_dedup_par. */
+#include <sys/mman.h>
+#include <stdint.h>
+/* Pede paginas de 2 MB para um bloco grande: so' muda o tamanho das paginas
+   (menos falhas de pagina na primeira escrita), nunca o conteudo.
+   MSCD_NOHUGE=1 desliga. */
+static void mscd_huge(void *p,size_t bytes)
+{ static int off=-1;
+  if (off<0) off=getenv("MSCD_NOHUGE")?1:0;
+  if (off||(bytes<(8u<<20))) return;
+  uintptr_t a=((uintptr_t)p+((1u<<21)-1))&~(uintptr_t)((1u<<21)-1);
+  uintptr_t e=((uintptr_t)p+bytes)&~(uintptr_t)((1u<<21)-1);
+  if (e>a) madvise((void*)a,e-a,MADV_HUGEPAGE);
+}
+
+static int mscd_dedup_tab(const float *patom,int natoms,int msorder,
+  float vlenc,float nearest,int katoms,int *pnsymm,int *pmscatter,
+  int *ptscatter,int *panalyze,int **ptempadd,int **ptevenadd,
+  float **ptevenpar,int *pntrieven)
+{ const int CO=205,NC=2*CO+1;
+  float awidth=round(1.0f/nearest,vlenc)+2.01f;
+  int NL=0,NV=0,NK=katoms,i;
+  /* limites de r1 e 1/r2 pelos pares */
+  for (int a=0;a<natoms;++a)
+    for (int b=0;b<natoms;++b)
+    { if (b==a) continue;
+      float x=patom[b*12]-patom[a*12],y=patom[b*12+1]-patom[a*12+1],
+        z=patom[b*12+2]-patom[a*12+2];
+      float le=(float)sqrt(x*x+y*y+z*z);
+      int li=(int)floor(round(le,0.005f)/0.005f+0.5)+2;
+      int vi=(int)floor(round(1.0f/le,vlenc)/vlenc+0.5)+2;
+      if (li>NL) NL=li;
+      if (vi>NV) NV=vi;
+    }
+  NL+=1; NV+=1;
+  double ne=(double)NL*NK*NV*NC;
+  if ((NK<1)||(ne>4.0e8)) return(-1);
+  long nent=(long)ne;
+  if (nent>=2147483647L) return(-1);
+  int *tab=new (std::nothrow) int [nent];
+  if (!tab) return(-1);
+  mscd_huge(tab,(size_t)nent*sizeof(int));
+  /* o tevenadd guarda, ja' na passada 1, a entrada da tabela de cada trio;
+     a passada 3 so' traduz entrada -> indice final, sem recalcular nada */
+  int *tevenadd=new (std::nothrow) int [natoms*natoms*natoms];
+  if (!tevenadd) { delete [] tab; return(-1); }
+  mscd_huge(tevenadd,(size_t)natoms*natoms*natoms*sizeof(int));
+  for (long q=0;q<nent;++q) tab[q]=-1;
+  volatile int bad=0;
+  int nthr=1;
+#ifdef _OPENMP
+  nthr=omp_get_max_threads();
+#endif
+#ifdef MSCDTIMER
+  double dt0=omp_get_wtime();
+#define TABT(nome) do { double t_=omp_get_wtime(); fprintf(stderr,"[dedup] %-28s %7.3f s\n",nome,t_-dt0); dt0=t_; } while (0)
+#else
+#define TABT(nome)
+#endif
+
+  /* 1. presenca de cada assinatura */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic,1) num_threads(nthr)
+#endif
+  for (int ia=0;ia<natoms;++ia)
+  { if ((msorder==2)&&(patom[ia*12+7]==0)) continue;
+    for (int ib=0;ib<natoms;++ib)
+    { if (ib==ia) continue;
+      float xa=patom[ib*12]-patom[ia*12], ya=patom[ib*12+1]-patom[ia*12+1];
+      float za=patom[ib*12+2]-patom[ia*12+2];
+      float lena=(float)sqrt(xa*xa+ya*ya+za*za);
+      float akind=patom[ib*12+6]; lena=mscd_round(lena,0.005f);
+      int li=(int)floor(lena/0.005f+0.5), ak=(int)akind-1;
+      if ((li<0)||(li>=NL)||(ak<0)||(ak>=NK)||((float)li*0.005f!=lena)||
+        ((float)(ak+1)!=akind)) { bad=1; continue; }
+      int *row=tab+((long)li*NK+ak)*NV*NC;
+      for (int ic=0;ic<natoms;++ic)
+      { if (ic==ib) continue;
+        SKey k=mscd_sig(patom,ia,ib,ic,lena,xa,ya,za,akind,awidth,vlenc);
+        int vi=(int)floor(k.v/vlenc+0.5), ci=(int)floor(k.c/0.005f+0.5)+CO;
+        if ((vi<0)||(vi>=NV)||(ci<0)||(ci>=NC)||((float)vi*vlenc!=k.v)||
+          ((float)(ci-CO)*0.005f!=k.c)) { bad=1; continue; }
+        row[vi*NC+ci]=0;
+        tevenadd[ia*natoms*natoms+ib*natoms+ic]=
+          (int)((((long)li*NK+ak)*NV+vi)*NC+ci);
+      }
+    }
+  }
+  if (bad) { delete [] tab; delete [] tevenadd; return(-1); }
+  TABT("1 presenca (tabela)");
+
+  /* S, na ordem da tabela; o indice da entrada vai junto */
+  std::vector<SKey> S; std::vector<long> E;
+  for (long q=0;q<nent;++q)
+  { if (tab[q]<0) continue;
+    int ci=(int)(q%NC); long r=q/NC; int vi=(int)(r%NV); r/=NV;
+    int ak=(int)(r%NK); int li=(int)(r/NK);
+    SKey k;
+    k.l=(float)li*0.005f; k.v=(float)vi*vlenc; k.c=(float)(ci-CO)*0.005f;
+    float akind=(float)(ak+1);
+    float search=(float)((akind-1.0)*awidth+k.v+k.c+1.005);
+    k.s=round(search,0.005f);
+    S.push_back(k); E.push_back(q);
+  }
+
+  /* 2. o nsymm final, como em mscd_dedup_par */
+  std::vector<DKey> D;
+  int analyze=0,win=-1,cn=*pnsymm,cm=*pmscatter,tsc=0;
+  while (win<0)
+  { if (cn<2) { delete [] tab; delete [] tevenadd; return(621); }
+    ++analyze;
+    tsc=cm/cn/3;
+    float astep=(cn-1.0f)/(katoms*awidth);
+    D.resize(S.size());
+    long ns=(long)S.size(),q;
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(nthr)
+#endif
+    for (q=0;q<ns;++q)
+    { int m=(int)(S[q].s*astep)+1;
+      if (m<1) m=1; else if (m>cn-1) m=cn-1;
+      D[q].l=S[q].l; D[q].v=S[q].v; D[q].c=S[q].c; D[q].m=m;
+    }
+    __gnu_parallel::sort(D.begin(),D.end(),DLess());
+    size_t u=0;
+    for (size_t r=0;r<D.size();++r)
+      if ((u==0)||!dkeq(D[u-1],D[r])) D[u++]=D[r];
+    D.resize(u);
+    std::vector<int> cnt(cn,0);
+    for (size_t r=0;r<D.size();++r) ++cnt[D[r].m];
+    int over=0,lastover=0;
+    for (int m=1;m<cn;++m)
+      if (cnt[m]>tsc) { if (m<cn-1) over=1; else lastover=1; }
+    if ((!over)&&lastover)
+    { if ((long)cn*tsc*3+2<cm) over=1;
+      else { delete [] tab; delete [] tevenadd; return(621); }
+    }
+    if (!over) { win=1; break; }
+    if ((cn<10)&&(cm<=5*natoms*natoms*natoms)) cm=cm*3/2;
+    cn/=2;
+  }
+  TABT("2 escolha do nsymm");
+
+  /* cada entrada da tabela recebe o seu indice final */
+  int nd=(int)D.size();
+  { unsigned int hs=1024; while (hs<=(unsigned int)nd*2u) hs<<=1;
+    unsigned int hm=hs-1;
+    std::vector<int> dt(hs,-1);
+    for (int j=0;j<nd;++j)
+    { unsigned int p=dkh(D[j])&hm;
+      while (dt[p]>=0) p=(p+1)&hm;
+      dt[p]=j;
+    }
+    float astep=(cn-1.0f)/(katoms*awidth);
+    for (size_t r=0;r<S.size();++r)
+    { DKey d; d.l=S[r].l; d.v=S[r].v; d.c=S[r].c;
+      d.m=(int)(S[r].s*astep)+1;
+      if (d.m<1) d.m=1; else if (d.m>cn-1) d.m=cn-1;
+      unsigned int p=dkh(d)&hm; int j=-1;
+      while (dt[p]>=0) { if (dkeq(D[dt[p]],d)) { j=dt[p]; break; } p=(p+1)&hm; }
+      if (j<0) { delete [] tab; delete [] tevenadd; return(-1); }
+      tab[E[r]]=j;
+    }
+  }
+  std::vector<SKey>().swap(S); std::vector<long>().swap(E);
+
+  /* 3. indice de cada trio e representante */
+  int *first=new (std::nothrow) int [nd>0?nd:1];
+  if (!first) { delete [] tevenadd; delete [] tab; return(102); }
+  for (int j=0;j<nd;++j) first[j]=0x7fffffff;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic,1) num_threads(nthr)
+#endif
+  for (int ia=0;ia<natoms;++ia)
+  { if ((msorder==2)&&(patom[ia*12+7]==0)) continue;
+    for (int ib=0;ib<natoms;++ib)
+    { if (ib==ia) continue;
+      int base=ia*natoms*natoms+ib*natoms;
+      for (int ic=0;ic<natoms;++ic)
+      { if (ic==ib) continue;
+        int n=base+ic;
+        int j=tab[tevenadd[n]];
+        tevenadd[n]=j;
+        if (j<0) { bad=1; continue; }
+        int old=first[j];
+        while (n<old)
+        { int got=__sync_val_compare_and_swap(&first[j],old,n);
+          if (got==old) break;
+          old=got;
+        }
+      }
+    }
+  }
+  delete [] tab;
+  TABT("3 indice de cada trio");
+  if (bad) { delete [] tevenadd; delete [] first; return(621); }
+
+  float *tevenpar=new (std::nothrow) float [(long)nd*10];
+  int *tempadd=new (std::nothrow) int [cn];
+  if ((!tevenpar)||(!tempadd))
+  { delete [] tevenadd; delete [] first; delete [] tevenpar; delete [] tempadd;
+    return(102);
+  }
+  for (int j=0;j<nd;++j)
+  { int n=first[j],ia=n/(natoms*natoms),ib=(n/natoms)%natoms,ic=n%natoms;
+    tevenpar[j*10]=D[j].l;
+    tevenpar[j*10+1]=round(1.0f/D[j].l,vlenc);
+    tevenpar[j*10+2]=D[j].v;
+    tevenpar[j*10+3]=D[j].c;
+    for (int k=4;k<10;++k) tevenpar[j*10+k]=0.0f;
+    tevenpar[j*10+4]=patom[ib*12+6];
+    tevenpar[j*10+7]=(float)ia;
+    tevenpar[j*10+8]=(float)ib; tevenpar[j*10+9]=(float)ic;
+  }
+  for (int m=0;m<cn;++m) tempadd[m]=0;
+  { int k=0; size_t r=0;
+    for (int m=1;m<cn;++m)
+    { while ((r<D.size())&&(D[r].m==m)) { ++k; ++r; }
+      tempadd[m]=k;
+    }
+  }
+  delete [] first;
+  (void)i;
+  *pnsymm=cn; *pmscatter=cm; *ptscatter=tsc; *panalyze=analyze;
+  *ptempadd=tempadd; *ptevenadd=tevenadd; *ptevenpar=tevenpar; *pntrieven=nd;
+  return(0);
+}
+
 int Mscdrun::symtrivert()
 { int ia,ib,ic,j,k,m,n,p,q,tscatter,analyze,slot,nslot;
   float xa,ya,za,xb,yb,zb,lena,lenb,vlenb,vlenc,awidth,astep,
@@ -417,6 +1058,114 @@ int Mscdrun::symtrivert()
   else if (msorder==2) mscatter=m*eatoms*natoms*natoms;
   else mscatter=ntrieven=nscorse=nsymm=0;
 
+  static int dedupserial=-1;
+  /* so' com MSCD_GPU: sem a variavel o caminho de CPU fica o original */
+  if (dedupserial<0)
+    dedupserial=(getenv("MSCD_DEDUPSERIAL")||!getenv("MSCD_GPU"))?1:0;
+  static int dedupcand=-1;
+  if (dedupcand<0) dedupcand=getenv("MSCD_DEDUPCAND")?1:0;
+  if ((error==0)&&(!dedupserial)&&(!dedupcand)&&(msorder>=2)&&
+    (nsymm>=2)&&(mscatter>0))
+  { int *ta=NULL,*tv=NULL,nt=0; float *tp=NULL;
+    { int ns0=nsymm,ms0=mscatter;
+      error=getenv("MSCD_DEDUPHASH")?-1:
+        mscd_dedup_tab(patom,natoms,msorder,vlenc,nearest,katoms,
+        &nsymm,&mscatter,&tscatter,&analyze,&ta,&tv,&tp,&nt);
+      if (error==-1)
+      { nsymm=ns0; mscatter=ms0;
+        error=mscd_dedup_par(patom,natoms,msorder,vlenc,nearest,katoms,
+          &nsymm,&mscatter,&tscatter,&analyze,&ta,&tv,&tp,&nt);
+      }
+    }
+    if (error==0)
+    { for (j=1;j<analyze;++j)
+        if (((dispmode>1)&&(msorder>2)&&(natoms>20))||
+          ((dispmode>1)&&(msorder==2)&&(natoms>333))||(dispmode>4))
+          conout.string("Reanalyzing, please wait ...",0,1);
+      tempadd=ta;
+      if (tevenadd) delete [] tevenadd;
+      tevenadd=tv;
+      if (tevenpar) delete [] tevenpar;
+      tevenpar=tp; ntrieven=nt;
+    }
+  }
+  else
+  {
+  if ((error==0)&&(!dedupserial)&&(msorder>=2)&&(nsymm>=2)&&(mscatter>0))
+  { /* passadas candidatas em paralelo; ver mscd_pass_run */
+    const int W=3;
+    MscdPass cand[64];
+    int ncand=0,base=0,win=-1,i,cn,cm;
+    volatile int vencedor=1<<30;
+    cn=nsymm; cm=mscatter;
+    while ((win<0)&&(error==0))
+    { int nw=0;
+      for (i=0;i<W;++i)
+      { if (cn<2) break;
+        memset(&cand[base+i],0,sizeof(MscdPass));
+        cand[base+i].nsymm=cn; cand[base+i].mscatter=cm;
+        ++nw;
+        /* a regra do original, aplicada no estouro */
+        if ((cn<10)&&(cm<=5*natoms*natoms*natoms)) cm=cm*3/2;
+        cn/=2;
+      }
+      if (nw==0) { error=621; break; }
+      ncand=base+nw;
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(nw) schedule(static,1)
+#endif
+      for (i=0;i<nw;++i)
+      { mscd_pass_run(&cand[base+i],base+i,&vencedor,patom,natoms,
+          msorder,vlenc,nearest,katoms);
+        if (cand[base+i].status==0)
+        {
+#ifdef _OPENMP
+#pragma omp critical(mscd_venc)
+#endif
+          { if (base+i<vencedor) vencedor=base+i;
+          }
+        }
+      }
+      for (i=base;i<ncand;++i)
+      { if (cand[i].status==2) { error=102; break; }
+        if (cand[i].status==0) { win=i; break; }
+        if (cand[i].status!=1) { error=901; break; }
+      }
+      if ((win<0)&&(error==0)&&(cn<2)) error=621;
+      base=ncand;
+      if (base+W>64) { if (win<0) error=621; break; }
+    }
+    for (i=0;i<ncand;++i)
+    { if (i==win) continue;
+      mscd_pass_free(&cand[i]);
+    }
+    if (win>=0)
+    { /* reproduz o que o original deixou na tela e no contador */
+      for (i=0;i<win;++i)
+      {
+#ifdef MSCDTIMER
+        fprintf(stderr,"[reanalyze] estouro em ia=%d de %d (nsymm=%d)\n",
+          cand[i].stopia,natoms,cand[i].nsymm);
+#endif
+        if (((dispmode>1)&&(msorder>2)&&(natoms>20))||
+          ((dispmode>1)&&(msorder==2)&&(natoms>333))||
+          (dispmode>4))
+          conout.string("Reanalyzing, please wait ...",0,1);
+      }
+      analyze=win+1;
+      nsymm=cand[win].nsymm; mscatter=cand[win].mscatter;
+      tscatter=cand[win].tscatter; nslot=cand[win].nslot;
+      awidth=cand[win].awidth; astep=cand[win].astep;
+      tempadd=cand[win].tempadd; tempar=cand[win].tempar;
+      origem=cand[win].origem; destino=cand[win].destino;
+      ordbuf=cand[win].ordbuf;
+      if (tevenadd) delete [] tevenadd;
+      tevenadd=cand[win].tevenadd;
+      delete [] cand[win].htab;
+    }
+  }
+  else
+  {
   if (error==0)
   { if (tevenadd) delete [] tevenadd;
     tevenadd=new int [natoms*natoms*natoms];
@@ -504,6 +1253,9 @@ int Mscdrun::symtrivert()
               conout.string("Reanalyzing, please wait ...",0,1);
             if ((nsymm<10)&&(mscatter<=5*natoms*natoms*natoms))
               mscatter=mscatter*3/2;
+#ifdef MSCDTIMER
+            fprintf(stderr,"[reanalyze] estouro em ia=%d de %d (nsymm=%d)\n",ia,natoms,nsymm);
+#endif
             nsymm/=2; if (nsymm<2) error=621;
             ia=ib=ic=natoms+10;
           }
@@ -512,6 +1264,7 @@ int Mscdrun::symtrivert()
     }
   }
 
+  }
   if (htab) { delete [] htab; htab=NULL; }
   MSCDT("A dedup natoms^3");
   k=0; if (tempadd) tempadd[0]=k;
@@ -593,6 +1346,7 @@ int Mscdrun::symtrivert()
   if (origem) delete [] origem;
   if (destino) delete [] destino;
   if (ordbuf) delete [] ordbuf;
+  }
 
   MSCDT("C indexa natoms^3");
   p=q=0;
@@ -677,6 +1431,21 @@ int Mscdrun::symdblvert()
     if ((!devenadd)&&(!tempar)) error=102;
   }
 
+  /* 08/10/2026: a busca linear abaixo e' O(pares x distintos). Com 963
+     atomos levava 237 s, mais que o calculo inteiro. Com MSCD_GPU a busca e'
+     por tabela hash: os pares distintos sao unicos (a busca linear para no
+     primeiro igual, e so' ha um), o indice j continua sendo a ordem da
+     primeira aparicao, e as chaves vem de round(), que nunca devolve -0,
+     entao bits iguais <=> "==". Mesmo devenadd, mesmo devenpar. */
+  static int dblhash=-1;
+  if (dblhash<0) dblhash=(getenv("MSCD_GPU")&&!getenv("MSCD_DBLSERIAL"))?1:0;
+  int *dh=NULL; unsigned int dmask=0;
+  if (dblhash&&(error==0)&&(ndbleven>0))
+  { unsigned int hs=1024;
+    while (hs<=(unsigned int)ndbleven*2u) hs<<=1;
+    dh=new int [hs]; dmask=hs-1;
+    for (unsigned int h=0;h<hs;++h) dh[h]=-1;
+  }
   n=0;
   for (ia=0;(error==0)&&(ia<natoms);++ia)
   { if ((msorder<1)||((msorder==1)&&(patom[ia*12+7]==0))) continue;
@@ -688,6 +1457,30 @@ int Mscdrun::symdblvert()
       akind=patom[ib*12+6];
       xa=round(xa,1.0e-4f); ya=round(ya,1.0e-4f);
       za=round(za,1.0e-4f); lena=round(lena,1.0e-4f);
+      if (dh)
+      { unsigned int h=mscd_chave(xa,ya,za,(int)(akind*16.0f))&dmask;
+        j=n;
+        while (dh[h]>=0)
+        { int q=dh[h];
+          if ((xa==tempar[q*7])&&(ya==tempar[q*7+1])&&
+            (za==tempar[q*7+2])&&(akind==tempar[q*7+4]))
+          { devenadd[ia*natoms+ib]=q; j=n+10; break;
+          }
+          h=(h+1)&dmask;
+        }
+        if (j==n)
+        { if (n<ndbleven-1)
+          { devenadd[ia*natoms+ib]=n;
+            tempar[n*7]=xa; tempar[n*7+1]=ya; tempar[n*7+2]=za;
+            tempar[n*7+3]=lena; tempar[n*7+4]=(float)akind;
+            tempar[n*7+5]=(float)ia; tempar[n*7+6]=(float)ib;
+            dh[h]=n;
+            ++n;
+          }
+          else error=621;
+        }
+        continue;
+      }
       for (j=0;(error==0)&&(j<n);++j)
       { if ((xa==tempar[j*7])&&(ya==tempar[j*7+1])&&
           (za==tempar[j*7+2])&&(akind==tempar[j*7+4]))
@@ -707,6 +1500,7 @@ int Mscdrun::symdblvert()
       }
     }
   }
+  if (dh) delete [] dh;
   ndbleven=n;
   if ((error==0)&&(ndbleven>0))
   { if (devenpar) delete [] devenpar;

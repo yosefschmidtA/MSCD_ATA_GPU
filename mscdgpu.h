@@ -55,8 +55,36 @@ int mscdgpu_setup_summation(
     int ntrieven, int ntrielem, const float *patom, int msorder);
 
 int mscdgpu_summation(float akin, const Gcplx *tevenelem, Gcplx *asum_host, const float *patom);
+/* As duas metades do summation: launch enfileira tudo na placa e volta na
+   hora; finish espera e copia as linhas dos emissores para asum_host. */
+int mscdgpu_summation_launch(float akin, const Gcplx *tevenelem);
+int mscdgpu_summation_finish(Gcplx *asum_host);
+/* Chamadas encadeadas: launch2 devolve o slot, finish2 espera so' ele. */
+int mscdgpu_summation_launch2(float akin, const Gcplx *tevenelem, int *slot);
+int mscdgpu_summation_finish2(int slot, Gcplx *asum_host);
+
+/* pathcut do precutable na placa (08/10/2026). Thread por (ib,ic), laco de
+   ia em serie, mesma ordem da CPU. O pow do passo m=2 fica no host: a libm
+   da CUDA nao garante os bits da glibc. bsum tem natoms^2 complexos. */
+int mscdgpu_pathcut_begin(int natoms,int msorder,int raorder,float pathcut,
+  const float *patom,const int *tevenadd,const float *tevenpar,int ntrieven,
+  const Gcplx *tevenelem,int ntrielem,const Gcplx *bsum);
+int mscdgpu_pathcut_step(int m,float *xa_m2);
+int mscdgpu_pathcut_setbsum(const Gcplx *bsum);
+int mscdgpu_pathcut_end(int *tevencut,int *tevendim);
+/* Fase 6: rowsonly!=0 desce do tevendim so' as linhas (ia,ib) com algum
+   tevencut, as unicas que o host le no modo GPU com np=1. */
+int mscdgpu_pathcut_end2(int *tevencut,int *tevendim,int rowsonly);
+
+/* Fase 6: sem talpha/tgamma, o setup pede a rotacao de cada trio que
+   precisa dela (evedim>1) por esta funcao. */
+typedef void (*mscdgpu_rotfn)(int ia,int ib,int ic,float *alpha,float *gamma);
+void mscdgpu_set_rotfn(mscdgpu_rotfn f);
 
 void mscdgpu_teardown(void);
+/* So' para o build -DMSCDTIMER: espera a placa, para os acumuladores
+   medirem o kernel e nao o lancamento assincrono. */
+void mscdgpu_sync(void);
 const char *mscdgpu_lasterror(void);
 
 #ifdef __cplusplus

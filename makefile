@@ -84,7 +84,7 @@ NVCC     = nvcc
 # tirados de um float: 1 ulp perto da fronteira troca a entrada da tabela.
 # Medido: com FMA, 80.209 elementos acima de 1e-3 e maxrel 6,2.
 NVFLAGS  = -O3 -arch=sm_89 -lineinfo -fmad=false
-CUDALIBS = -lcudart
+CUDALIBS = -L$(or $(CUDA_PATH),/opt/cuda)/lib64 -lcudart
 gpuexe   = randmscd_gpu
 
 mscdgpu.o : mscdgpu.cu mscdgpu.h

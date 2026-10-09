@@ -79,6 +79,24 @@ class Rotamat
     int gpu_lnum() const { return lnum; }
     int gpu_lamdum() const { return lamdum; }
     int gpu_betanum() const { return betanum; }
+    /* Bloco final em paralelo (08/10/2026). O cache de rotmatb (pbeta, com
+       tolerancia de 0,1 grau em rotelem) vira estado explicito: quem chama
+       simula a sequencia de pbeta em serie e cada thread monta o rotmatb que
+       aquela chamada veria. As contas sao copia literal de makerotation e
+       termination -- so' o cache sai. */
+    float st_pbeta() const { return pbeta; }
+    int st_rotbsize() const { return lnum*lamdum; }
+    int st_error() const { return error; }
+    void st_copyrotb(float *buf) const;
+    void st_fillrotb(float beta,float *buf) const;
+    int st_termpass(int al,int ma,int mb) const;
+    float st_terminationb(int al,int ma,int mb,const float *buf) const;
+    void st_setrotb(float beta,const float *buf);
+    /* um elemento so' do rotmatb que makerotation(beta) montaria; termination
+       le um so' por chamada, e montar os lnum*lamdum era 98% de desperdicio */
+    float st_rotbelem(float beta,int al,int k) const;
+    float st_terminationv(int al,int ma,int mb,const float *buf,
+      float beta) const;
   private:
     int makerotation(float beta);
 };

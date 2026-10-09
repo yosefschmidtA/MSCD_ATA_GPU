@@ -167,6 +167,62 @@ Fcomplex Hankel::fhankelfac(int al,int am,float invkx)
   return(cxa);
 }//end of Hankel::fhankelfac
 
+void Hankel::st_copyarg(Fcomplex *buf) const
+{ int k;
+  for (k=0;k<lnum*cmnum;++k) buf[k]=hankarg[k];
+}
+
+/* o hankarg que fhankelfac(...,invkx) montaria */
+void Hankel::st_fillarg(float invkx,Fcomplex *buf) const
+{ int i,l,m,t;
+  float ya;
+  ya=(float)(4.0*(ndata-1.0)*invkx);
+  i=(int)ya;
+  if (i<0) i=0;
+  else if (i>ndata-2) i=ndata-2;
+  for (l=0;l<lnum;++l) for (m=0;m<cmnum;++m)
+  { t=i*lnum*cmnum+l*cmnum+m;
+    buf[l*cmnum+m]=hankmat[t]+
+      (ya-i)*(hankmat[t+lnum*cmnum]-hankmat[t]);
+  }
+}
+
+Fcomplex Hankel::st_fhankelfacb(int al,int am,const Fcomplex *buf) const
+{ Fcomplex cxa;
+  if ((error==0)&&(al<lnum)&&(am<cmnum)) cxa=buf[al*cmnum+am];
+  else if (error==0) cxa=0.0f;
+  else cxa=(float)error;
+  return(cxa);
+}
+
+Fcomplex Hankel::st_fhankelfacv(int al,int am,const Fcomplex *buf,
+  float invkx) const
+{ int i,t;
+  float ya;
+  Fcomplex cxa;
+  if ((error==0)&&(al<lnum)&&(am<cmnum))
+  { if (buf) cxa=buf[al*cmnum+am];
+    else
+    { ya=(float)(4.0*(ndata-1.0)*invkx);
+      i=(int)ya;
+      if (i<0) i=0;
+      else if (i>ndata-2) i=ndata-2;
+      t=i*lnum*cmnum+al*cmnum+am;
+      cxa=hankmat[t]+
+        (ya-i)*(hankmat[t+lnum*cmnum]-hankmat[t]);
+    }
+  }
+  else if (error==0) cxa=0.0f;
+  else cxa=(float)error;
+  return(cxa);
+}
+
+void Hankel::st_setarg(float invkx,const Fcomplex *buf)
+{ int k;
+  argument=invkx;
+  for (k=0;k<lnum*cmnum;++k) hankarg[k]=buf[k];
+}
+
 Fcomplex Hankel::fhankelfaca(int al,int am,float invkx)
 { int i,l,m,t;
   float ya;

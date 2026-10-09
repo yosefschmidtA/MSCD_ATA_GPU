@@ -35,7 +35,50 @@ para economizar leitura de código:
 - **`EQUACOES.md`** — as ~40 equações do manual (`MANUAL_MSCD_CEA.pdf`) mapeadas
   para arquivo:linha, nos dois sentidos.
 
-## Estado atual (05/08/2026, noite)
+## Estado atual (09/10/2026), leia este bloco primeiro
+
+**Fase 6 (varredura) feita**, depois de um `Cov0.txt` com 963 átomos que
+levava 310 s e quase todo no preparo. O vilão era o `symdblvert` (busca
+linear, 237 s), não o Reanalyzing. Agora 963 átomos levam **15,5 s** com pico
+de ~8 GB de memória, o ferro **9,8 s** e o `Cov0.txt` antigo **3,8 s**, tudo
+bit a bit igual. Detalhes e chaves de ambiente em `OTIMIZACAO.md`, seção
+"Fase 6, varredura". Lista arquivo por arquivo em `gw/varredura.md`. Teste dos
+três casos, saída e log, com `gw/t.sh <rótulo>`.
+
+## Estado de 08/10/2026 (Fase 5)
+
+**Fase 5 feita** (`OTIMIZACAO.md`, seção "Fase 5", etapas 5a a 5m). Critério
+mais forte que o da Fase 0. A saída tem de sair **bit a bit igual** à do binário
+de GPU anterior, congelado em `gw/ref_gpu`, com as saídas de referência em
+`gw/*_refgpu.out` (e as de CPU em `gw/*_refcpu.out`). A pasta `gw/` é de
+trabalho, não versionada.
+
+| | antes da Fase 5 | depois |
+|---|---:|---:|
+| `1x2iron.in` (367 átomos, 2400 pontos) | 450,7 s | 16 a 26 s |
+| `Cov0.txt` (247 átomos, 779 pontos) | 33,8 s | 5 a 10 s |
+
+A faixa é a carga da máquina (o protetor de tela do Omarchy ficou ligado).
+**Produção agora é `np=1`**, não mais `np=4`.
+
+```bash
+MSCD_GPU=1 mpirun --use-hwthread-cpus --bind-to none -np 1 randmscd_gpu Cov0.txt
+```
+
+O que mudou, em uma linha cada. O kernel do `summation` deixou de usar uma
+thread por par e virou duas fases (produtos em paralelo, soma na ordem
+original). O `allevendetec` calcula o fator por `ib`. O `algam` é
+pré-calculado. O `pathcut` foi para a GPU. O bloco final (`onevenemit`), o
+`alltrievent(1)` e a dedup do `symtrivert` rodam em paralelo na CPU com os
+caches com tolerância simulados em série. E as chamadas são encadeadas. Tudo
+só liga com `MSCD_GPU`, e o caminho de CPU segue bit a bit igual ao de antes.
+Chaves para A/B na tabela "Chaves de ambiente da Fase 5" do `OTIMIZACAO.md`.
+
+**Armadilha nova.** Uma falha da GPU no setup não para o programa. Ele
+termina "normalmente" com R-factor 1,0000 e −1,0000 e a curva zerada. Olhe o
+`stderr` e o R-factor de toda corrida de GPU.
+
+## Estado de 05/08/2026, noite (registro)
 
 **A Fase 3 do port de CUDA está feita e validada.** Contudo, antes na Fase 2 o tempo aumentou para **66,19 s** em `np=1`. Isso ocorreu porque a transferência PCIe aumentou levemente (copiávamos os 7,3 MB do `devendetec` de volta para a CPU). Na Fase 3:
 
@@ -57,6 +100,11 @@ array quando `akin` muda. Correto **porque a energia é fixa** neste modo
 (`scanmode=223`, `kmin=kmax`). **Atenção:** se algum dia ligar ajuste de
 geometria com energia fixa, `tevenelem` muda sem `akin` mudar e o cache serve
 lixo. Hoje não há gatilho (`trymax=0`).
+
+> **Superado em 08/10/2026.** O gargalo com 316+ átomos não era latência de
+> lançamento. Cada chamada do `summation` levava 29 ms DENTRO do kernel, que
+> usava uma thread por par. Ver "Fase 5" no `OTIMIZACAO.md`. O texto abaixo
+> fica como registro.
 
 **O ganho do cache foi ~6 s, não o que se esperava** — a hipótese dos 240 GB de
 PCIe estava errada, porque o `pathcut` já poda 99,8% dos caminhos e o que trafega
@@ -172,9 +220,23 @@ rm -f *.o && make randmscd_gpu \
   CPPFLAGS="-O3 -std=c++98 -w -fpermissive -fopenmp -DMSCDGPU"
 ./baseline/regressao-gpu.sh 1
 
-# GPU em produção — np=4 é o ótimo medido, e np>4 PIORA (latência de kernel)
-MSCD_GPU=1 mpirun --use-hwthread-cpus -np 4 randmscd_gpu Cov0.txt
+# GPU em produção, desde a Fase 5 (08/10/2026) com np=1. Os núcleos entram
+# por OpenMP e a placa fica sem disputa entre processos.
+MSCD_GPU=1 mpirun --use-hwthread-cpus --bind-to none -np 1 randmscd_gpu Cov0.txt
 ```
+
+**Máquina nova desde 08/10/2026.** Omarchy (Arch) nativo, não mais WSL2. Open
+MPI 5.0.10, g++ 16, glibc 2.44, CUDA 13.3, driver 610. O Open MPI 5 não tem
+`libmpi_cxx`, então todo binário da máquina antiga morre com "libmpi_cxx.so.40
+not found" e tem de ser recompilado (os `randmscd_*` e `*.baseline` antigos
+inclusive). O `nvcc` acha o host compiler pelo `NVCC_CCBIN=/usr/bin/g++-15` de
+`/etc/profile.d/cuda.sh`. Os scripts `baseline/regressao*.sh` usam
+`/usr/bin/time`, que é o pacote `time`. Medido na troca: GPU contra CPU novo dá
+`max|Δχ| = 1,0×10⁻⁵`, o mesmo piso de antes. Já o CPU novo contra
+`baseline/saida.txt` difere em 514 linhas no último dígito (`max|Δχ| = 4,3×10⁻⁵`,
+`factors` iguais), deriva do compilador e da libm, não do código. **A base byte a
+byte da máquina antiga não vale aqui** e tem de ser regerada com o binário V5
+recompilado antes de validar qualquer mudança de CPU.
 
 **Os dois builds compartilham os `.o` e se atropelam.** Depois de mexer no
 `randmscd_gpu`, `rm -f *.o` de novo antes de reconstruir o `randmscd_parallel`,

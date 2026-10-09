@@ -2,6 +2,11 @@
 #include <fstream>
 #include <iomanip>
 #include <math.h>
+#include <string.h>
+#ifdef MSCDGPU
+#include <stdlib.h>
+#include "mscdgpu.h" /* MSCDGPU_TOPINC */
+#endif
 
 #include "cartesia.h"
 #include "phase.h"
@@ -283,6 +288,220 @@ int Mscdrun::alltrievent(int forcut,float akin)
   return(error);
 } //end of Mscdrun::alltrievent
 
+
+/* ============== alltrievent(1) em paralelo (08/10/2026) ==============
+   No caminho forcut=1 o precutable fixa eledim=radim para TODOS os trios,
+   entao um trio "smear" so' depende do trio anterior: le a segunda metade do
+   tempeven, que o anterior encheu com o mesmo passo de linha, mais o indice
+   0, que ninguem grava e vale 0 (o construtor de Fcomplex zera). Cada cadeia
+   comeca num trio nao-smear, que nao le nada de fora. As cadeias sao
+   independentes.
+   Os caches com historia (evenmat, hanka, hankb) so' sao tocados pelo
+   evenelem, que so' os trios nao-smear chamam (~1% deles). Entao:
+     1. em serie, na ordem original, so' as cabecas de cadeia, com o evenelem
+        de sempre -- os caches veem exatamente a mesma sequencia;
+     2. em paralelo por cadeia, o resto, que e' conta local.
+   Copia literal das expressoes do alltrievent. MSCD_ALLTRISERIAL=1 desliga. */
+/* Fase 6: operator-() unario, operator*(Fcomplex,Fcomplex) e cabs() de
+   fcomplex.cpp, escritos aqui com as mesmas expressoes para poderem ser
+   expandidos inline no laco das cadeias (eram ~500 chamadas por trio). */
+struct Mt { float re,im; };
+static inline Fcomplex mt_neg(const Fcomplex &a)
+{ const Mt *x=(const Mt *)&a; Mt r; r.re=-x->re; r.im=-x->im;
+  return *(const Fcomplex *)&r;
+}
+static inline Fcomplex mt_mul(const Fcomplex &a,const Fcomplex &b)
+{ const Mt *x=(const Mt *)&a,*y=(const Mt *)&b;
+  Mt r; r.re=x->re*y->re-x->im*y->im; r.im=x->re*y->im+x->im*y->re;
+  return *(const Fcomplex *)&r;
+}
+static inline float mt_cabs(const Fcomplex &a)
+{ const Mt *x=(const Mt *)&a;
+  return((float)sqrt(x->re*x->re+x->im*x->im));
+}
+
+int Mscdrun::alltrievent_par1(float akin)
+{
+  MSCDT_DECL; int j,p,q,t,k,ma,na,mb,nb,eledim,akind,nh,h;
+  float xa,xb,xc,xd,ka,cosbeta,beta,vka,vkb;
+  Fcomplex cxa,cvalue;
+  int lamda[64];
+  const float radian=(float)(3.14159265/180.0);
+  int rr=radim*radim;
+
+  for (j=0;j<ntrieven;++j)
+    if ((int)tevenpar[j*10+5]!=radim) return(alltrievent(1,akin));
+  if ((error==0)&&(msorder>1)&&(!tevenelem)) error=901;
+  if (error!=0) return(error);
+  for (j=0;j<32;++j)
+  { if ((j==0)||(j==3)||(j==10)) ma=0;
+    else if (j<3) ma=3-j*2;
+    else if (j<6) ma=18-j*4;
+    else if (j<8) ma=13-j*2;
+    else if (j<10) ma=51-j*6;
+    else if (j<13) ma=46-j*4;
+    else if (j<15) ma=108-j*8;
+    else ma=0;
+    if (j==10) na=2;
+    else if ((j==3)||(j==6)||(j==7)||(j==11)||(j==12)) na=1;
+    else na=0;
+    lamda[j]=ma; lamda[32+j]=na;
+  }
+
+  /* cabecas de cadeia: smear==0, a mesma condicao do alltrievent */
+  int *head=new int [ntrieven+1];
+  nh=0;
+  for (j=0;j<ntrieven;++j)
+  { if ((j>0)&&(tevenpar[j*10+1]==tevenpar[(j-1)*10+1])&&
+      (tevenpar[j*10+2]==tevenpar[(j-1)*10+2])&&
+      (tevenpar[j*10+3]==tevenpar[(j-1)*10+3])&&
+      (tevenpar[j*10+4]==tevenpar[(j-1)*10+4])&&
+      (tevenpar[j*10]>=tevenpar[(j-1)*10])&&
+      (tevenpar[j*10+5]<=tevenpar[(j-1)*10+5])) continue;
+    head[nh++]=j;
+  }
+  head[nh]=ntrieven;
+  Fcomplex *hbuf=new Fcomplex [(long)nh*rr];
+  Fcomplex *hcxa=new Fcomplex [nh];
+
+  /* 1. em serie: as cabecas, com evenelem na ordem original */
+  for (h=0;(error==0)&&(h<nh);++h)
+  { Fcomplex *te=hbuf+(long)h*rr;
+    j=head[h];
+    xa=tevenpar[j*10]; ka=akin*xa; cosbeta=tevenpar[j*10+3];
+    akind=(int)tevenpar[j*10+4]; eledim=(int)tevenpar[j*10+5];
+    xc=meanpath->finvpath(akin);
+    xd=vibrate->fvibmsrd(xa,aweight[akind-1]);
+    xb=(float)exp(-0.5*xa*xc-akin*akin*xd*(1.0-cosbeta))/ka;
+    cxa=xb*expix->fexpix(ka/radian);
+    beta=(float)acos(cosbeta)/radian;
+    beta=(float)floor(beta*10+0.5)*0.1f;
+    if (raorder<0) vka=vkb=0.0f;
+    else
+    { vka=tevenpar[j*10+1]/akin; vkb=tevenpar[j*10+2]/akin;
+    }
+    hcxa[h]=cxa;
+    for (p=0;p<eledim;++p)
+    { for (q=0;q<eledim;++q)
+      { t=q+p*eledim;
+        ma=lamda[p]; na=lamda[32+p];
+        mb=lamda[q]; nb=lamda[32+q];
+        k=(ma+mb)&1;
+        if ((ma==0)&&(mb<0)&&(k==0)) te[t]=te[t-1];
+        else if ((ma==0)&&(mb<0)) te[t]=-te[t-1];
+        else if ((ma<0)&&(mb==0)&&(k==0)) te[t]=te[t-eledim];
+        else if ((ma<0)&&(mb==0)) te[t]=-te[t-eledim];
+        else if ((ma<0)&&(mb>0)&&(k==0)) te[t]=te[t-eledim+1];
+        else if ((ma<0)&&(mb>0)) te[t]=-te[t-eledim+1];
+        else if ((ma<0)&&(mb<0)&&(k==0)) te[t]=te[t-eledim-1];
+        else if ((ma<0)&&(mb<0)) te[t]=-te[t-eledim-1];
+        else
+        { cvalue=evenelem(akind,ma,na,mb,nb,akin,vka,vkb,beta);
+          te[t]=cxa*cvalue;
+        }
+      }
+    }
+  }
+
+#ifdef MSCDTIMER
+  fprintf(stderr,"[alltri] %d cabecas de %d trios\n",nh,ntrieven);
+#endif
+  MSCDT("  precut   (alltrievent: cabecas em serie)");
+  /* 2. em paralelo: cada cadeia inteira, cabeca e smears */
+  if (error==0)
+  {
+#ifdef _OPENMP
+#pragma omp parallel
+#endif
+    { Fcomplex *tempeven=new Fcomplex [rr*2];  /* zerado pelo construtor */
+      Fcomplex cxa_,cxb_,cxc_;
+      float xa_,xb_,xc_,xd_,xe_,xf_,ka_,cosbeta_,vka_,vkb_;
+      int hh,jj,pp,qq,tt,kk,ma_,na_,mb_,nb_,ed,akd,memadd;
+      long hl;
+#ifdef _OPENMP
+#pragma omp for schedule(dynamic,64)
+#endif
+      for (hl=0;hl<nh;++hl)
+      { hh=(int)hl;
+        for (jj=head[hh];jj<head[hh+1];++jj)
+        { int smear=(jj>head[hh]);
+          xa_=tevenpar[jj*10]; ka_=akin*xa_; cosbeta_=tevenpar[jj*10+3];
+          akd=(int)tevenpar[jj*10+4]; ed=(int)tevenpar[jj*10+5];
+          memadd=(int)tevenpar[jj*10+6];
+          if (raorder<0) vka_=vkb_=0.0f;
+          else
+          { vka_=tevenpar[jj*10+1]/akin; vkb_=tevenpar[jj*10+2]/akin;
+          }
+          if (!smear)
+          { cxc_=hcxa[hh];
+            for (tt=0;tt<ed*ed;++tt) tempeven[tt]=hbuf[hl*rr+tt];
+          }
+          else
+          { xc_=meanpath->finvpath(akin);
+            xd_=vibrate->fvibmsrd(xa_,aweight[akd-1]);
+            xb_=(float)exp(-0.5*xa_*xc_-akin*akin*xd_*(1.0-cosbeta_))/ka_;
+            cxa_=xb_*expix->fexpix(ka_/radian);
+            cxb_=cxa_/cxc_; cxc_=cxa_;
+            for (pp=0;pp<ed;++pp)
+            { for (qq=0;qq<ed;++qq)
+              { tt=qq+pp*ed;
+                ma_=lamda[pp]; mb_=lamda[qq];
+                kk=(ma_+mb_)&1;
+                if ((ma_==0)&&(mb_<0)&&(kk==0)) tempeven[tt]=tempeven[tt-1];
+                else if ((ma_==0)&&(mb_<0)) tempeven[tt]=mt_neg(tempeven[tt-1]);
+                else if ((ma_<0)&&(mb_==0)&&(kk==0))
+                  tempeven[tt]=tempeven[tt-ed];
+                else if ((ma_<0)&&(mb_==0)) tempeven[tt]=mt_neg(tempeven[tt-ed]);
+                else if ((ma_<0)&&(mb_>0)&&(kk==0))
+                  tempeven[tt]=tempeven[tt-ed+1];
+                else if ((ma_<0)&&(mb_>0)) tempeven[tt]=mt_neg(tempeven[tt-ed+1]);
+                else if ((ma_<0)&&(mb_<0)&&(kk==0))
+                  tempeven[tt]=tempeven[tt-ed-1];
+                else if ((ma_<0)&&(mb_<0)) tempeven[tt]=mt_neg(tempeven[tt-ed-1]);
+                else tempeven[tt]=mt_mul(cxb_,tempeven[tt+rr]);
+              }
+            }
+          }
+          /* o bloco forcut!=0 do alltrievent, literal */
+          xa_=mt_cabs(tempeven[0]); xb_=xc_=xd_=xe_=0.0f;
+          for (pp=0;pp<ed;++pp)
+          { for (qq=0;qq<ed;++qq)
+            { tt=qq+pp*ed;
+              ma_=lamda[pp]; na_=lamda[32+pp];
+              mb_=lamda[qq]; nb_=lamda[32+qq];
+              if (ma_<0) continue;
+              else xf_=mt_cabs(tempeven[tt]);
+              for (kk=0;kk<ma_+na_;++kk) xf_*=vka_;
+              for (kk=0;kk<nb_;++kk) xf_*=vkb_;
+              if ((pp<1)&&(qq<1)) continue;
+              else if ((pp<3)&&(qq<3))
+              { if (xb_<xf_) xb_=xf_;
+              }
+              else if ((pp<6)&&(qq<6))
+              { if (xc_<xf_) xc_=xf_;
+              }
+              else if ((pp<10)&&(qq<10))
+              { if (xd_<xf_) xd_=xf_;
+              }
+              else if (xe_<xf_) xe_=xf_;
+              tempeven[tt+rr]=tempeven[tt];
+            }
+          }
+          if (xd_<xe_) xd_=xe_; if (xc_<xd_) xc_=xd_;
+          if (xb_<xc_) xb_=xc_; if (xa_<xb_) xa_=xb_;
+          tevenelem[memadd]=tempeven[0]; tevenelem[memadd+1]=xa_;
+          tevenelem[memadd+2]=xb_; tevenelem[memadd+3]=xc_;
+          tevenelem[memadd+4]=xd_; tevenelem[memadd+5]=xe_;
+        }
+      }
+      delete [] tempeven;
+    }
+  }
+  MSCDT("  precut   (alltrievent: cadeias em paralelo)");
+  delete [] head; delete [] hbuf; delete [] hcxa;
+  return(error);
+}
+
 int Mscdrun::precutable()
 { int ia,ib,ic,id,j,k,m,memadd,eledim;
   float xa,xb,xc,xd,xe,xf,akin,pemeven,centa,centb,centc,centd;
@@ -356,7 +575,17 @@ int Mscdrun::precutable()
   }
   if ((error==0)&&(msorder>1))
   { for (j=0;j<msorder*natoms*natoms;++j) tevencut[j]=0;
-    for (j=0;j<natoms*natoms*natoms;++j) tevendim[j]=0;
+    /* Fase 6: com o pathcut na GPU o tevendim inteiro e' sobrescrito na
+       descida (mscdgpu_pathcut_end), entao zera-lo aqui (3,6 GB com 963
+       atomos, num laco serial) e' trabalho jogado fora. MSCD_ZEROALL=1
+       zera sempre. */
+    int skipz=0;
+#ifdef MSCDGPU
+    skipz=(getenv("MSCD_GPU")&&!getenv("MSCD_PATHCUTCPU")&&
+      !getenv("MSCD_ZEROALL")&&(pathcut>1.0e-10))?1:0;
+#endif
+    if (!skipz)
+      for (j=0;j<natoms*natoms*natoms;++j) tevendim[j]=0;
   }
 
   for (m=0;(error==0)&&(m<ntrieven);++m)
@@ -374,7 +603,16 @@ int Mscdrun::precutable()
       flogout->string("setting up pre-cut table ...",0,2);
     akin=kmin;
     MSCDT("  precut esfericas+cortes");
+#ifdef MSCDGPU
+    { static int atp=-1;
+      if (atp<0) atp=(getenv("MSCD_GPU")&&!getenv("MSCD_ALLTRISERIAL")&&
+        (ATA!=1))?1:0;
+      if (atp) error=alltrievent_par1(akin);
+      else error=alltrievent(1,akin);
+    }
+#else
     error=alltrievent(1,akin);
+#endif
     MSCDT("  precut alltrievent");
   }
   pemeven=0.0f;
@@ -412,6 +650,38 @@ int Mscdrun::precutable()
      com ia por fora eles viram acumuladores em memoria, e as 105 milhoes de
      iteracoes passam a fazer load+store. Nao inverta sem medir de novo.
      Detalhes em OTIMIZACAO.md, secao "V3". */
+#ifdef MSCDGPU
+  /* 08/10/2026: com MSCD_GPU o laco abaixo roda na placa (mscdgpu_pathcut_*),
+     com o mesmo resultado bit a bit. O pow do passo m=2 continua aqui.
+     MSCD_PATHCUTCPU=1 forca a CPU. */
+  static int gpupc=-1;
+  if (gpupc<0) gpupc=(getenv("MSCD_GPU")&&!getenv("MSCD_PATHCUTCPU"))?1:0;
+  if ((error==0)&&gpupc&&(pathcut>1.0e-10))
+  { float *xa2=new float [natoms*natoms];
+    if (mscdgpu_pathcut_begin(natoms,msorder,raorder,pathcut,patom,tevenadd,
+      tevenpar,ntrieven,(const Gcplx *)tevenelem,ntrielem,(const Gcplx *)bsum))
+    { std::cerr<<"GPU pathcut: "<<mscdgpu_lasterror()<<"\n"; error=901; }
+    MSCDT("  precut   (pathcut: subida)");
+    for (m=2;(error==0)&&(m<=msorder);++m)
+    { if (mscdgpu_pathcut_step(m,xa2))
+      { std::cerr<<"GPU pathcut: "<<mscdgpu_lasterror()<<"\n"; error=901; }
+      else if (m==2)
+      { for (ib=0;ib<natoms;++ib)
+          for (ic=0;ic<natoms;++ic)
+          { if (ic==ib) continue;
+            bsum[ib*natoms+ic]=(float)pow((double)xa2[ib*natoms+ic],0.75);
+          }
+        if (mscdgpu_pathcut_setbsum((const Gcplx *)bsum)) error=901;
+      }
+    }
+    MSCDT("  precut   (pathcut: passos)");
+    if ((error==0)&&mscdgpu_pathcut_end2(tevencut,tevendim,
+      ((numpe==1)&&!getenv("MSCD_DIMFULL"))?1:0))
+    { std::cerr<<"GPU pathcut: "<<mscdgpu_lasterror()<<"\n"; error=901; }
+    delete [] xa2;
+  }
+  else
+#endif
   for (m=2;(error==0)&&(m<=msorder);++m)
   { for (ib=0;ib<natoms;++ib)
     { for (ic=0;ic<natoms;++ic) asum[ib*natoms+ic]=bsum[ib*natoms+ic];
@@ -489,6 +759,74 @@ int Mscdrun::precutable()
   MSCDT("  precut pathcut msorder x natoms^3");
   for (j=0;(error==0)&&(j<ntrieven);++j) tevenpar[j*10+5]=0.0f;
   for (j=0;(error==0)&&(j<21*21);++j) stat[j]=0.0f;
+#ifdef MSCDGPU
+  /* 08/10/2026: o mesmo laco em paralelo. Os dois resultados sao exatos em
+     qualquer ordem. tevenpar[k*10+5] e' um maximo de inteiros pequenos. E
+     stat[] conta em float somando 1.0f, o que e' exato ate 2^24 e depois
+     PARA (16777216+1 arredonda para 16777216), entao o valor final e'
+     min(contagem,2^24), que e' o que se calcula aqui com inteiros.
+     O "eledim>>24;" sem atribuicao do original (m>8) e' preservado.
+     MSCD_STATSERIAL=1 volta ao laco serial. */
+  static int statpar=-1;
+  if (statpar<0) statpar=(getenv("MSCD_GPU")&&!getenv("MSCD_STATSERIAL"))?1:0;
+  if ((error==0)&&statpar)
+  { unsigned char *emax=new unsigned char [ntrieven>0?ntrieven:1];
+    long cnt[21*21];
+    for (j=0;j<ntrieven;++j) emax[j]=0;
+    for (j=0;j<21*21;++j) cnt[j]=0;
+    /* uma varredura so', com ia por fora e ic contiguo por dentro: o laco
+       original saltava natoms^2 a cada passo de ia e repetia a varredura
+       inteira para cada m. Maximo e contagem nao dependem da ordem. */
+#pragma omp parallel
+    { long lc[16*21];
+      int cut[16];
+      for (int q=0;q<16*21;++q) lc[q]=0;
+#pragma omp for schedule(dynamic,1)
+      for (int ia_=0;ia_<natoms;++ia_)
+      { int emi=(patom[ia_*12+7]!=0.0);
+        for (int ib_=0;ib_<natoms;++ib_)
+        { if (ib_==ia_) continue;
+          int any=0;
+          for (int mm=2;mm<=msorder;++mm)
+          { cut[mm]=(tevencut[(mm-1)*natoms*natoms+ia_*natoms+ib_]!=0)&&
+              !((mm==2)&&(!emi));
+            any|=cut[mm];
+          }
+          if (!any) continue;
+          long base=(long)ia_*natoms*natoms+(long)ib_*natoms;
+          for (int ic_=0;ic_<natoms;++ic_)
+          { if (ic_==ib_) continue;
+            int k_=tevenadd[base+ic_],ev=tevendim[base+ic_];
+            for (int mm=2;mm<=msorder;++mm)
+            { if (!cut[mm]) continue;
+              int e_=ev;
+              if ((sizeint<4)&&(mm>5)) e_>>=12;
+              else if (mm>8) ;
+              else e_>>=(mm-2)*4;
+              e_&=15;
+              unsigned char old_=emax[k_];
+              while (old_<e_)
+              { unsigned char got=__sync_val_compare_and_swap(&emax[k_],
+                  old_,(unsigned char)e_);
+                if (got==old_) break;
+                old_=got;
+              }
+              lc[(mm-1)*21+e_]+=1;
+            }
+          }
+        }
+      }
+#pragma omp critical(mscd_stat)
+      { for (int q=0;q<16*21&&q<21*21;++q) cnt[q]+=lc[q];
+      }
+    }
+    for (j=0;j<ntrieven;++j) tevenpar[j*10+5]=(float)emax[j];
+    for (j=0;j<21*21;++j)
+      if (cnt[j]>0) stat[j]=(float)(cnt[j]<16777216L?cnt[j]:16777216L);
+    delete [] emax;
+  }
+  else
+#endif
   for (m=2;(error==0)&&(m<=msorder);++m)
   { for (ib=0;ib<natoms;++ib)
     { for (ic=0;ic<natoms;++ic)
@@ -510,6 +848,7 @@ int Mscdrun::precutable()
       }
     }
   }
+  MSCDT("  precut   (estatisticas: laco)");
   ntrielem=0;
   for (j=0;(error==0)&&(j<ntrieven);++j)
   { eledim=(int)tevenpar[j*10+5]; tevenpar[j*10+6]=(float)ntrielem;
@@ -639,6 +978,7 @@ int Mscdrun::precutable()
   }
   if ((error==0)&&(displog>0)&&(flogout)) error=flogout->geterror();
 
+  MSCDT("  precut   (estatisticas: resto e saida)");
   if (stat) delete [] stat;
   if (asum) delete [] asum; if (bsum) delete [] bsum;
   if (pdnum) delete [] pdnum;
@@ -654,7 +994,8 @@ int Mscdrun::precutable()
     devendetec=new Fcomplex [natoms*natoms*radim];
     if ((!pdnum)||(!tevenelem)||(!devenelem)||(!devendetec)) error=102;
   }
-  if ((error==0)&&(msorder>1)&&(raorder>0))
+  talpha=tgamma=NULL;
+  if ((error==0)&&(msorder>1)&&(raorder>0)&&(!skiprot()))
   { talpha=new float [natoms*natoms*natoms];
     tgamma=new float [natoms*natoms*natoms];
     if ((!talpha)||(!tgamma)) error=102;
@@ -738,12 +1079,73 @@ int Mscdrun::onerotation(float *patoma,float *patomb,float *patomc,
   return(error);
 } //end of Mscdrun::onerotation
 
+/* Fase 6 (08/10/2026). Com MSCD_GPU=1 e np=1 o talpha/tgamma (natoms^3
+   floats cada, 7,1 GB com 963 atomos) nao sao alocados nem preenchidos: no
+   modo GPU so' a montagem das listas de trios os le, e so' para trios com
+   evedim>1. Ela pede a rotacao por rotfor(), que aplica a mesma regra do
+   allrotation abaixo, entao os valores sao os mesmos. Com np>1 o sendsup
+   envia as tabelas aos outros ranks, e com MSCD_GPU=validate o summation da
+   CPU as le, entao nesses casos nada muda. MSCD_ROTFULL=1 desliga. */
+int Mscdrun::skiprot()
+{ static int s=-1;
+  if (s<0)
+  { const char *g=getenv("MSCD_GPU");
+    s=((g)&&(strcmp(g,"validate")!=0)&&(atoi(g)!=0)&&(numpe==1)&&
+      (!getenv("MSCD_ROTFULL")))?1:0;
+  }
+  return(s);
+}
+
+void Mscdrun::rotfor(int ia,int ib,int ic,float *alpha,float *gamma)
+{ float al,be,ga;
+  int k=tevenadd[ia*natoms*natoms+ib*natoms+ic];
+  int eledim=(int)tevenpar[k*10+5];
+  if (eledim<2) al=ga=0.0f;
+  else if (onerotation(patom+ia*12,patom+ib*12,patom+ic*12,&al,&be,&ga)!=0)
+    al=ga=0.0f;
+  *alpha=al; *gamma=ga;
+}
+
 int Mscdrun::allrotation()
 { int ia,ib,ic,id,k,eledim;
   float emiter,alpha,beta,gamma;
 
+  if (skiprot()) return(error);
+
   if ((error==0)&&(msorder>1)&&(raorder>0)&&((!talpha)||(!tgamma)))
     error=901;
+#ifdef MSCDGPU
+  /* 08/10/2026: cada trio e' independente (onerotation e' funcao pura dos
+     tres atomos), entao o laco vai em paralelo sobre ia, com o mesmo
+     resultado. Um erro de onerotation (atomos coincidentes) para a corrida
+     do mesmo jeito. MSCD_ROTSERIAL=1 volta ao laco serial. */
+  static int rotpar=-1;
+  if (rotpar<0) rotpar=(getenv("MSCD_GPU")&&!getenv("MSCD_ROTSERIAL"))?1:0;
+  if ((error==0)&&rotpar)
+  { int err_=0;
+#pragma omp parallel for schedule(dynamic,1) reduction(max:err_)
+    for (int a=0;a<natoms;++a)
+    { float em=patom[a*12+7],al_,be_,ga_;
+      if ((msorder<2)||(raorder<1)||((msorder==2)&&(em==0))) continue;
+      for (int b=0;b<natoms;++b)
+      { if (b==a) continue;
+        for (int c_=0;c_<natoms;++c_)
+        { if (c_==b) continue;
+          int id_=a*natoms*natoms+b*natoms+c_;
+          int k_=tevenadd[id_],ed=(int)tevenpar[k_*10+5];
+          int e_=0;
+          if (ed<2) al_=ga_=0.0f;
+          else e_=onerotation(patom+a*12,patom+b*12,patom+c_*12,
+            &al_,&be_,&ga_);
+          if (e_) { if (e_>err_) err_=e_; al_=ga_=0.0f; }
+          talpha[id_]=al_; tgamma[id_]=ga_;
+        }
+      }
+    }
+    if (err_) error=err_;
+    return(error);
+  }
+#endif
   for (ia=0;(error==0)&&(ia<natoms);++ia)
   { emiter=patom[ia*12+7];
     if ((msorder<2)||(raorder<1)||((msorder==2)&&(emiter==0))) continue;
@@ -779,6 +1181,11 @@ extern "C" void mscdgpu_set_dbg(int on);
    validate==0: a GPU escreve devenelem e a CPU nao roda.
 
    Ligado por MSCD_GPU=1 (substitui) ou MSCD_GPU=validate (compara). */
+static Mscdrun *g_rotobj=NULL;
+static void mscd_rotcb(int ia,int ib,int ic,float *alpha,float *gamma)
+{ g_rotobj->rotfor(ia,ib,ic,alpha,gamma);
+}
+
 int Mscdrun::gpudblevent(float akin,float *xdetec,int validate)
 { static int ready=0;
   static Gcplx *host=NULL;
@@ -789,6 +1196,7 @@ int Mscdrun::gpudblevent(float akin,float *xdetec,int validate)
   if (!ready)
   { Gconst k;
     int al[8];
+    MSCDT_DECL;
     /* phase.cpp:28 aloca phasec com 61 entradas fixas, independente do lnum
        do arquivo -- e o lnum DIFERE entre as especies (psAg111 e psl9), entao
        o passo tem de ser o da alocacao, nao o do arquivo. */
@@ -831,12 +1239,17 @@ int Mscdrun::gpudblevent(float akin,float *xdetec,int validate)
     k.nkind=(katoms<4)?katoms:4;
     k.radim=radim; k.raorder=raorder;
 
+    MSCDT("  gpu: preparo do host");
     if (mscdgpu_setup(&k))
     { std::cerr<<"GPU setup: "<<mscdgpu_lasterror()<<"\n"; return 1; }
+    MSCDT("  gpu: mscdgpu_setup (contexto + tabelas)");
     if (msorder > 1) {
+      g_rotobj=this;
+      mscdgpu_set_rotfn(mscd_rotcb);
       if (mscdgpu_setup_summation(tevencut, tevendim, tevenadd, tevenpar, talpha, tgamma, ntrieven, ntrielem, patom, msorder))
       { std::cerr<<"GPU setup summation: "<<mscdgpu_lasterror()<<"\n"; return 1; }
     }
+    MSCDT("  gpu: setup_summation (trios, slots, itens)");
     mscdgpu_set_dbg(validate);
     mscdgpu_set_alnum(al,katoms);
     host=new Gcplx [(long)ndbleven*radim];
@@ -932,7 +1345,10 @@ int Mscdrun::gpuevendetec(float akin,float *xdetec,int validate)
 {
   float xc=meanpath->finvpath(akin);
   if (!validate) {
-    if (mscdgpu_allevendetec(akin,xdetec,xc,(Gcplx*)devendetec)) return 901;
+    /* NULL: o devendetec fica so' na placa. Com MSCD_GPU=1 o summation roda
+       na GPU e o host nunca le este array, e a copia custava natoms^2*radim
+       complexos por chamada -- 16 MB com 367 atomos, 12000 vezes. */
+    if (mscdgpu_allevendetec(akin,xdetec,xc,NULL)) return 901;
     return 0;
   }
   
@@ -1212,6 +1628,385 @@ int Mscdrun::onevenemit(int ia,int ib,int alf,int am,float akin,
   }
   return(error);
 } //end of Mscdrun::onevenemit
+
+
+/* ===================== bloco final em paralelo =====================
+   08/10/2026. O onevenemit do bloco final do summation e' ~70% do laco
+   depois que a GPU ficou com o resto. Ele e' independente por ib, MAS os
+   15 evenbelem de cada chamada passam por dois caches com tolerancia:
+     termmat->rotelem refaz rotmatb so' se |beta-pbeta|>0.1 grau, e
+     hankb->fhankelfac refaz hankarg so' se |vkb-argument|>1e-3.
+   Entao o valor de uma chamada depende das chamadas anteriores, e paralelizar
+   direto mudaria bits. O que se faz aqui:
+     1. geometria (onerotation, euler) de todas as chamadas, em paralelo --
+        e' funcao pura de (ia,ib,xdetec,polaron);
+     2. em serie, a simulacao dos dois caches com as regras originais, que
+        diz qual estado cada chamada ve (custa uma comparacao por chamada);
+        onemidetec e matrixelement rodam aqui, na ordem, com os objetos
+        reais postos no estado simulado;
+     3. em paralelo, os valores, cada thread montando o rotmatb/hankarg do
+        estado da sua chamada com as mesmas contas de makerotation e
+        fhankelfac.
+   O resultado e' o que o laco serial produziria, bit a bit. */
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+/* Fase 6: a matriz do Cartesia::euler(0,polaron[3],180-polaron[4]),
+   calculada uma vez por chamada com as mesmas expressoes, e aplicada com a
+   mesma ordem de operacoes de euler(). eu[0..8] sao os coeficientes. */
+static void mscd_eulerpre(float alpha,float beta,float gamma,float *eu)
+{ float sina,sinb,sing,cosa,cosb,cosg;
+  const float radian=(float)(3.14159265/180.0);
+  sina=(float)sin(alpha*radian); sinb=(float)sin(beta*radian);
+  sing=(float)sin(gamma*radian);
+  cosa=(float)cos(alpha*radian); cosb=(float)cos(beta*radian);
+  cosg=(float)cos(gamma*radian);
+  eu[0]=cosa*cosb*cosg-sina*sing; eu[1]=cosa*cosb*sing+sina*cosg;
+  eu[2]=cosa*sinb;
+  eu[3]=sina*cosb*cosg+cosa*sing; eu[4]=sina*cosb*sing-cosa*cosg;
+  eu[5]=sina*sinb;
+  eu[6]=-sinb*cosg; eu[7]=sinb*sing; eu[8]=cosb;
+}
+static inline void mscd_eulerapp(const float *eu,float x,float y,float z,
+  float *o)
+{ o[0]=eu[0]*x-eu[1]*y+eu[2]*z;
+  o[1]=eu[3]*x-eu[4]*y+eu[5]*z;
+  o[2]=eu[6]*x+eu[7]*y+eu[8]*z;
+}
+
+int Mscdrun::onevenemit_geo(int ia,int ib,float akin,float *xdetec,
+  float *polaron,float *g,const float *eu)
+{ float xa,xb,yb,zb,lengb,kb,vkb,alpha,beta,gamma;
+  float xatoma[3],xatomb[3],xatomc[3];
+  int err=0;
+
+  xb=patom[ib*12]-patom[ia*12]; yb=patom[ib*12+1]-patom[ia*12+1];
+  zb=patom[ib*12+2]-patom[ia*12+2];
+  lengb=(float)sqrt(xb*xb+yb*yb+zb*zb);
+  kb=akin*lengb;
+  if ((raorder<0)||(kb<1.0e-5)) vkb=0.0f; else vkb=1.0f/kb;
+  alpha=beta=gamma=0.0f;
+  if (lengb<1.0e-5)
+  { alpha=0.0f; beta=0.0f; gamma=180.0f;
+  }
+  else
+  { xatomc[0]=patom[ib*12]+xdetec[0];
+    xatomc[1]=patom[ib*12+1]+xdetec[1];
+    xatomc[2]=patom[ib*12+2]+xdetec[2];
+    err=onerotation(patom+ia*12,patom+ib*12,xatomc,
+      &alpha,&beta,&gamma);
+    xa=gamma;
+    xatoma[0]=xatoma[1]=xatoma[2]=0.0f;
+    if (eu)
+    { /* mesma conta de euler(), sem refazer seno e cosseno; e a terceira
+         rotacao do original e' igual a primeira (mesmo vetor), entao o
+         theta e o phi saem do mesmo xatomb */
+      mscd_eulerapp(eu,xb,yb,zb,xatomb);
+      mscd_eulerapp(eu,xb+xdetec[0],yb+xdetec[1],zb+xdetec[2],xatomc);
+      if (err==0) err=onerotation(xatoma,xatomb,xatomc,&alpha,&beta,&gamma);
+      alpha=gamma-xa;
+      Cartesia pb(xatomb[0],xatomb[1],xatomb[2]);
+      beta=pb.theta(); gamma=180.0f-pb.phi();
+    }
+    else
+    { Cartesia pbond(xb,yb,zb);
+      pbond=pbond.euler(0.0f,polaron[3],180.0f-polaron[4]);
+      pbond.getcoordinates(xatomb,xatomb+1,xatomb+2);
+      pbond.loadcoordinates(xb+xdetec[0],yb+xdetec[1],zb+xdetec[2]);
+      pbond=pbond.euler(0.0f,polaron[3],180.0f-polaron[4]);
+      pbond.getcoordinates(xatomc,xatomc+1,xatomc+2);
+      if (err==0) err=onerotation(xatoma,xatomb,xatomc,&alpha,&beta,&gamma);
+      alpha=gamma-xa;
+
+      pbond.loadcoordinates(xb,yb,zb);
+      pbond=pbond.euler(0.0f,polaron[3],180.0f-polaron[4]);
+      beta=pbond.theta(); gamma=180.0f-pbond.phi();
+    }
+  }
+  g[0]=vkb; g[1]=alpha; g[2]=beta; g[3]=gamma;
+  return(err);
+}
+
+/* rotb==NULL: o elemento de rotmatb sai na hora para o beta rbeta;
+   harg==NULL: o de hankarg sai na hora para o argumento hval. Mesmas contas,
+   elemento a elemento, entao os mesmos bits. */
+/* Fase 6: as contas de Fcomplex::operator* e de Expix::fexpix escritas
+   aqui com as mesmas expressoes. Os originais ficam em fcomplex.cpp e
+   msfuncs.cpp e nao podiam ser expandidos inline; no bloco final cada um
+   era uma chamada de funcao. Fcomplex e' {float re,im} (fcomplex.h:31). */
+struct Mc { float re,im; };
+static inline Fcomplex mc_mul(const Fcomplex &a,const Fcomplex &b)
+{ const Mc *x=(const Mc *)&a,*y=(const Mc *)&b;
+  Mc r; r.re=x->re*y->re-x->im*y->im; r.im=x->re*y->im+x->im*y->re;
+  return *(const Fcomplex *)&r;
+}
+static inline Fcomplex mc_smul(float s,const Fcomplex &b)
+{ const Mc *y=(const Mc *)&b;
+  Mc r; r.re=y->re*s; r.im=y->im*s;
+  return *(const Fcomplex *)&r;
+}
+static inline Fcomplex mc_fexpix(const Fcomplex *cexpix,int ndata,int mdata,
+  float xa)
+{ int k;
+  while (xa>180.0) xa-=360.0f;
+  while (xa<-180.0) xa+=360.0f;
+  k=(int)(mdata+(ndata-1.0)*xa/360.0+0.5);
+  if (k<0) k=0;
+  else if (k>ndata-1) k=ndata-1;
+  return(cexpix[k]);
+}
+
+Fcomplex Mscdrun::evenbelemb(int alf,int ma,int na,int mb,int nb,
+  const float *rotb,float rbeta,const Fcomplex *harg,float hval)
+{ float xb;
+  Fcomplex cxa,cxc;
+
+  xb=(float)na;
+  if (error==0)
+  { xb=termmat->st_terminationv(alf,ma,mb,rotb,rbeta);
+    cxc=hankb->st_fhankelfacv(alf,iabs(mb)+iabs(nb),harg,hval);
+    cxa=mc_smul(xb,cxc);
+  }
+  return(cxa);
+}
+
+void Mscdrun::onevenemit_val(int ia,int ib,int alf,int am,const float *g,
+  const float *rotb,float rbeta,const Fcomplex *harg,float hval,
+  Fcomplex *aemitelem)
+{ float alpha,beta,gamma;
+  Fcomplex cxa,cxb,cxc,cxd,cxe,cxf,cxg,cxh,cxi,cvalue;
+
+  const Fcomplex *xt=expix->gpu_cexpix();
+  int xn=expix->gpu_ndata(),xm=expix->gpu_mdata();
+  alpha=g[1]; beta=g[2]; gamma=g[3];
+  cxa=mc_fexpix(xt,xn,xm,-gamma*am);
+  cxb=mc_fexpix(xt,xn,xm,-alpha-gamma*am);
+  cxc=mc_fexpix(xt,xn,xm,alpha-gamma*am);
+  cxd=mc_fexpix(xt,xn,xm,-alpha-alpha-gamma*am);
+  cxe=mc_fexpix(xt,xn,xm,alpha+alpha-gamma*am);
+  cxf=mc_fexpix(xt,xn,xm,-alpha-alpha-alpha-gamma*am);
+  cxg=mc_fexpix(xt,xn,xm,alpha+alpha+alpha-gamma*am);
+  cxh=mc_fexpix(xt,xn,xm,-alpha-alpha-alpha-alpha-gamma*am);
+  cxi=mc_fexpix(xt,xn,xm,alpha+alpha+alpha+alpha-gamma*am);
+  cvalue=evenbelemb(alf,am,0,0,0,rotb,rbeta,harg,hval);
+  aemitelem[0]=mc_mul(cxa,cvalue);
+  if ((ia!=ib)&&(raorder>0))
+  { cvalue=evenbelemb(alf,am,0,1,0,rotb,rbeta,harg,hval);
+    aemitelem[1]=mc_mul(cxb,cvalue);
+    cvalue=evenbelemb(alf,am,0,-1,0,rotb,rbeta,harg,hval);
+    aemitelem[2]=mc_mul(cxc,cvalue);
+  }
+  if ((ia!=ib)&&(raorder>1))
+  { cvalue=evenbelemb(alf,am,0,0,1,rotb,rbeta,harg,hval);
+    aemitelem[3]=mc_mul(cxa,cvalue);
+    cvalue=evenbelemb(alf,am,0,2,0,rotb,rbeta,harg,hval);
+    aemitelem[4]=mc_mul(cxd,cvalue);
+    cvalue=evenbelemb(alf,am,0,-2,0,rotb,rbeta,harg,hval);
+    aemitelem[5]=mc_mul(cxe,cvalue);
+  }
+  if ((ia!=ib)&&(raorder>2))
+  { cvalue=evenbelemb(alf,am,0,1,1,rotb,rbeta,harg,hval);
+    aemitelem[6]=mc_mul(cxb,cvalue);
+    cvalue=evenbelemb(alf,am,0,-1,1,rotb,rbeta,harg,hval);
+    aemitelem[7]=mc_mul(cxc,cvalue);
+    cvalue=evenbelemb(alf,am,0,3,0,rotb,rbeta,harg,hval);
+    aemitelem[8]=mc_mul(cxf,cvalue);
+    cvalue=evenbelemb(alf,am,0,-3,0,rotb,rbeta,harg,hval);
+    aemitelem[9]=mc_mul(cxg,cvalue);
+  }
+  if ((ia!=ib)&&(raorder>3))
+  { cvalue=evenbelemb(alf,am,0,0,2,rotb,rbeta,harg,hval);
+    aemitelem[10]=mc_mul(cxa,cvalue);
+    cvalue=evenbelemb(alf,am,0,2,1,rotb,rbeta,harg,hval);
+    aemitelem[11]=mc_mul(cxd,cvalue);
+    cvalue=evenbelemb(alf,am,0,-2,1,rotb,rbeta,harg,hval);
+    aemitelem[12]=mc_mul(cxe,cvalue);
+    cvalue=evenbelemb(alf,am,0,4,0,rotb,rbeta,harg,hval);
+    aemitelem[13]=mc_mul(cxh,cvalue);
+    cvalue=evenbelemb(alf,am,0,-4,0,rotb,rbeta,harg,hval);
+    aemitelem[14]=mc_mul(cxi,cvalue);
+  }
+}
+
+/* Passe A do bloco final: grava em ebuf o csum de cada chamada de
+   onevenemit e em cbuf o (cxb,cxc) de cada bloco, na ordem do laco serial. */
+int Mscdrun::finalpassa(float akin,float *xdetec,float *polaron,
+  Fcomplex *ebuf,Fcomplex *cbuf)
+{ static int *cia=NULL,*cib=NULL,*calf=NULL,*cam=NULL,*cerr=NULL;
+  static int *rst=NULL,*hst=NULL;
+  static float *cg=NULL,*rbv=NULL,*hbv=NULL;
+  static long qcap=0;
+  static float *rsnap=NULL; static Fcomplex *hsnap=NULL;
+  static float *rtmp=NULL; static Fcomplex *htmp=NULL;
+  static long scap=0;
+  int ia,ib,am,alf,ali,rsz,hsz,rs,hs,k,pass,nmb;
+  int mbs[16];
+  long q,nq,nblk,b,r,q0;
+  float rv,hv,beta,vkb;
+  Fcomplex cxb,cxc;
+
+  if (error!=0) return(error);
+  ali=linitial;
+  rsz=termmat->st_rotbsize(); hsz=hankb->st_argsize();
+
+  nq=nblk=0;
+  for (ia=0;ia<natoms;++ia)
+  { if (patom[ia*12+7]==0) continue;
+    for (am=-ali;am<=ali;++am)
+      for (alf=ali-1;alf<=ali+1;alf+=2)
+      { if ((alf<0)||(am<-alf)||(am>alf)||((finals==1)&&(alf==ali-1))||
+          ((finals==2)&&(alf==ali+1))) continue;
+        ++nblk;
+        for (ib=0;ib<natoms;++ib)
+        { if ((msorder<1)||(finals==3)||(ib==ia)) continue;
+          ++nq;
+        }
+      }
+  }
+  if (nq>qcap)
+  { delete [] cia; delete [] cib; delete [] calf; delete [] cam;
+    delete [] cerr; delete [] rst; delete [] hst; delete [] cg;
+    delete [] rbv; delete [] hbv;
+    qcap=nq;
+    cia=new int [qcap]; cib=new int [qcap]; calf=new int [qcap];
+    cam=new int [qcap]; cerr=new int [qcap]; rst=new int [qcap];
+    hst=new int [qcap]; cg=new float [4*qcap]; rbv=new float [qcap];
+    hbv=new float [qcap];
+  }
+  if (nblk+1>scap)
+  { delete [] rsnap; delete [] hsnap; delete [] rtmp; delete [] htmp;
+    scap=nblk+1;
+    rsnap=new float [scap*rsz]; hsnap=new Fcomplex [scap*hsz];
+    rtmp=new float [rsz]; htmp=new Fcomplex [hsz];
+  }
+
+  q=0;
+  for (ia=0;ia<natoms;++ia)
+  { if (patom[ia*12+7]==0) continue;
+    for (am=-ali;am<=ali;++am)
+      for (alf=ali-1;alf<=ali+1;alf+=2)
+      { if ((alf<0)||(am<-alf)||(am>alf)||((finals==1)&&(alf==ali-1))||
+          ((finals==2)&&(alf==ali+1))) continue;
+        for (ib=0;ib<natoms;++ib)
+        { if ((msorder<1)||(finals==3)||(ib==ia)) continue;
+          cia[q]=ia; cib[q]=ib; calf[q]=alf; cam[q]=am; ++q;
+        }
+      }
+  }
+
+  static int fprof=-1; static double ft[4]={0,0,0,0}; static long fcalls=0;
+  double ft0=0.0;
+  if (fprof<0) fprof=getenv("MSCD_GPUPROF")?1:0;
+#ifdef _OPENMP
+  if (fprof) ft0=omp_get_wtime();
+#endif
+  float eu[9];
+  static int eupre=-1;
+  if (eupre<0) eupre=getenv("MSCD_EULERFULL")?0:1;
+  mscd_eulerpre(0.0f,polaron[3],180.0f-polaron[4],eu);
+  const float *eup=eupre?eu:NULL;
+  /* 1. geometria */
+#ifdef _OPENMP
+  int nthr=omp_get_max_threads()/(numpe>0?numpe:1);
+  if (nthr<1) nthr=1;
+#pragma omp parallel for schedule(static) num_threads(nthr)
+#endif
+  for (q=0;q<nq;++q)
+    cerr[q]=onevenemit_geo(cia[q],cib[q],akin,xdetec,polaron,cg+4*q,eup);
+  for (q=0;q<nq;++q) if (cerr[q]) { error=cerr[q]; return(error); }
+#ifdef _OPENMP
+  if (fprof) { double t=omp_get_wtime(); ft[0]+=t-ft0; ft0=t; }
+#endif
+
+  /* lista de mb dos evenbelem de uma chamada (ia!=ib sempre aqui) */
+  nmb=0; mbs[nmb++]=0;
+  if (raorder>0) { mbs[nmb++]=1; mbs[nmb++]=-1; }
+  if (raorder>1) { mbs[nmb++]=0; mbs[nmb++]=2; mbs[nmb++]=-2; }
+  if (raorder>2) { mbs[nmb++]=1; mbs[nmb++]=-1; mbs[nmb++]=3; mbs[nmb++]=-3; }
+  if (raorder>3)
+  { mbs[nmb++]=0; mbs[nmb++]=2; mbs[nmb++]=-2; mbs[nmb++]=4; mbs[nmb++]=-4;
+  }
+
+  /* 2. simulacao serial dos caches; snapshot 0 = estado real de agora */
+  termmat->st_copyrotb(rsnap); rs=0; rv=termmat->st_pbeta();
+  hankb->st_copyarg(hsnap); hs=0; hv=hankb->st_argument();
+  long nsnap=1;
+  q=0; r=0;
+  for (ia=0;ia<natoms;++ia)
+  { if (patom[ia*12+7]==0) continue;
+    for (am=-ali;am<=ali;++am)
+      for (alf=ali-1;alf<=ali+1;alf+=2)
+      { if ((alf<0)||(am<-alf)||(am>alf)||((finals==1)&&(alf==ali-1))||
+          ((finals==2)&&(alf==ali+1))) continue;
+        pass=0;
+        for (k=0;k<nmb;++k) if (termmat->st_termpass(alf,am,mbs[k])) pass=1;
+        q0=q;
+        for (ib=0;ib<natoms;++ib)
+        { if ((msorder<1)||(finals==3)||(ib==ia)) continue;
+          vkb=cg[4*q]; beta=cg[4*q+2];
+          /* termination -> rotelem -> makerotation, mscdrunc/rotamat */
+          if ((error==0)&&pass&&(termmat->st_error()==0)&&
+            (fabs(beta-rv)>0.1)&&((float)fabs(beta)<181.0))
+          { rs=-1; rv=beta;
+          }
+          /* fhankelfac, msfuncs.cpp:151 */
+          if ((error==0)&&(hankb->st_error()==0)&&(fabs(vkb-hv)>1.0e-3))
+          { hs=-1; hv=vkb;
+          }
+          rst[q]=rs; rbv[q]=rv; hst[q]=hs; hbv[q]=hv;
+          ++q;
+        }
+        /* objetos reais no estado simulado, e onemidetec de verdade */
+        if (rs>=0) termmat->st_setrotb(rv,rsnap+(long)rs*rsz);
+        else { termmat->st_fillrotb(rv,rtmp); termmat->st_setrotb(rv,rtmp); }
+        if (hs>=0) hankb->st_setarg(hv,hsnap+(long)hs*hsz);
+        else { hankb->st_fillarg(hv,htmp); hankb->st_setarg(hv,htmp); }
+        if (finals==4) cxb=0.0f;
+        else cxb=onemidetec(akin,ia,alf,am,xdetec,polaron);
+        cxc=matrixelement(ali,alf,am,akin);
+        cbuf[r++]=cxb; cbuf[r++]=cxc;
+        termmat->st_copyrotb(rsnap+nsnap*rsz); rs=(int)nsnap;
+        rv=termmat->st_pbeta();
+        hankb->st_copyarg(hsnap+nsnap*hsz); hs=(int)nsnap;
+        hv=hankb->st_argument();
+        ++nsnap;
+        (void)q0;
+      }
+  }
+
+#ifdef _OPENMP
+  if (fprof) { double t=omp_get_wtime(); ft[1]+=t-ft0; ft0=t; }
+#endif
+  /* 3. valores */
+#ifdef _OPENMP
+#pragma omp parallel num_threads(nthr)
+#endif
+  { Fcomplex tmp[16];
+    int j;
+    const float *rp; const Fcomplex *hp;
+    long qq;
+#ifdef _OPENMP
+#pragma omp for schedule(static)
+#endif
+    for (qq=0;qq<nq;++qq)
+    { rp=(rst[qq]>=0)?rsnap+(long)rst[qq]*rsz:NULL;
+      hp=(hst[qq]>=0)?hsnap+(long)hst[qq]*hsz:NULL;
+      onevenemit_val(cia[qq],cib[qq],calf[qq],cam[qq],cg+4*qq,
+        rp,rbv[qq],hp,hbv[qq],tmp);
+      for (j=0;j<radim;++j) ebuf[qq*radim+j]=tmp[j];
+    }
+  }
+#ifdef _OPENMP
+  if (fprof)
+  { double t=omp_get_wtime(); ft[2]+=t-ft0;
+    if (++fcalls%2000==0)
+      fprintf(stderr,"FINALPROF %ld chamadas: geometria %.2f s, simulacao %.2f s, valores %.2f s\n",
+        fcalls,ft[0],ft[1],ft[2]);
+  }
+#endif
+  return(error);
+}
 
 Fcomplex Mscdrun::onemidetec(float akin,int ie,int alf,int am,
   float *xdetec,float *polaron)

@@ -380,6 +380,150 @@ int Rotamat::makerotation(float beta)
   return(error);
 } //end of Rotamat::makerotation
 
+void Rotamat::st_copyrotb(float *buf) const
+{ int k;
+  for (k=0;k<lnum*lamdum;++k) buf[k]=rotmatb[k];
+}
+
+/* O rotmatb que makerotation(beta) montaria. Mesmas expressoes, na mesma
+   ordem, inclusive a troca de sinal para beta<0. */
+void Rotamat::st_fillrotb(float beta,float *buf) const
+{ int i,k,al;
+  float abeta,xa;
+
+  abeta=(float)fabs(beta);
+  xa=(float)(abeta*(betanum-1.0)/180.0); i=(int)xa;
+  if (i<0) i=0;
+  else if (i>betanum-2) i=betanum-2;
+  for (al=0;al<lnum;++al)
+  { for (k=0;k<lamdum;++k)
+    { buf[al*lamdum+k]=rotmata[i*lnum*lamdum+al*lamdum+k]+
+        (xa-i)*(rotmata[(i+1)*lnum*lamdum+al*lamdum+k]-
+        rotmata[i*lnum*lamdum+al*lamdum+k]);
+      if ((beta<0.0)&&((k==2)||(k==5)||(k==7)||(k==10)||(k==12)||
+        (k==14)||(k==17)||(k==19)||(k==21)||(k==23)))
+        buf[al*lamdum+k]=-buf[al*lamdum+k];
+    }
+  }
+}
+
+/* 1 se termination chegaria a chamar rotelem (e portanto a mexer no cache) */
+int Rotamat::st_termpass(int al,int ma,int mb) const
+{ if (error!=0) return 0;
+  if ((al>=lnum)||(iabs(ma)>maxmag)||(iabs(mb)>maxmag)||
+    (iabs(ma)>al)||(iabs(mb)>al)) return 0;
+  return 1;
+}
+
+/* termination(al,ma,mb,beta) lendo buf no lugar do rotmatb do cache */
+float Rotamat::st_terminationb(int al,int ma,int mb,const float *buf) const
+{ int k,ta,tb,sign;
+  float element;
+
+  if (error!=0) element=0.0f;
+  else if ((al>=lnum)||(iabs(ma)>maxmag)||(iabs(mb)>maxmag)||
+    (iabs(ma)>al)||(iabs(mb)>al))
+    element=0.0f;
+  else
+  { /* rotelem sem o makerotation */
+    if (ma>=iabs(mb))
+    { ta=ma; tb=mb; sign=1;
+    }
+    else if ((ma<0)&&(-ma>=iabs(mb)))
+    { ta=-ma; tb=-mb;
+      if ((ma&1)==(mb&1)) sign=1; else sign=-1;
+    }
+    else if (mb>0)
+    { ta=mb; tb=ma;
+      if ((ma&1)==(mb&1)) sign=1; else sign=-1;
+    }
+    else
+    { ta=-mb; tb=-ma; sign=1;
+    }
+    k=ta*(ta+1)+tb;
+    if (sign>=0) element=buf[al*lamdum+k];
+    else element=-buf[al*lamdum+k];
+    /* resto de termination */
+    ta=0; tb=iabs(mb);
+    if ((ta==0)&&(tb<2)) k=tb;
+    else if ((ta==1)&&(tb<2)) k=tb+2;
+    else if ((ta<2)&&(tb==2)) k=ta+4;
+    else if ((ta==2)&&(tb<3)) k=tb+6;
+    else if ((ta<3)&&(tb==3)) k=ta+9;
+    else if ((ta==3)&&(tb<4)) k=tb+12;
+    else if ((ta<4)&&(tb==4)) k=ta+16;
+    else k=tb+20;
+    element*=rotmatc[al*lamdum+k]/(float)sqrt(al+al+1.0);
+  }
+  return (element);
+}
+
+float Rotamat::st_rotbelem(float beta,int al,int k) const
+{ int i;
+  float abeta,xa,v;
+
+  abeta=(float)fabs(beta);
+  xa=(float)(abeta*(betanum-1.0)/180.0); i=(int)xa;
+  if (i<0) i=0;
+  else if (i>betanum-2) i=betanum-2;
+  v=rotmata[i*lnum*lamdum+al*lamdum+k]+
+    (xa-i)*(rotmata[(i+1)*lnum*lamdum+al*lamdum+k]-
+    rotmata[i*lnum*lamdum+al*lamdum+k]);
+  if ((beta<0.0)&&((k==2)||(k==5)||(k==7)||(k==10)||(k==12)||
+    (k==14)||(k==17)||(k==19)||(k==21)||(k==23)))
+    v=-v;
+  return(v);
+}
+
+/* st_terminationb com buf, ou com o elemento calculado na hora (buf==NULL) */
+float Rotamat::st_terminationv(int al,int ma,int mb,const float *buf,
+  float beta) const
+{ int k,ta,tb,sign;
+  float element,e;
+
+  if (error!=0) element=0.0f;
+  else if ((al>=lnum)||(iabs(ma)>maxmag)||(iabs(mb)>maxmag)||
+    (iabs(ma)>al)||(iabs(mb)>al))
+    element=0.0f;
+  else
+  { if (ma>=iabs(mb))
+    { ta=ma; tb=mb; sign=1;
+    }
+    else if ((ma<0)&&(-ma>=iabs(mb)))
+    { ta=-ma; tb=-mb;
+      if ((ma&1)==(mb&1)) sign=1; else sign=-1;
+    }
+    else if (mb>0)
+    { ta=mb; tb=ma;
+      if ((ma&1)==(mb&1)) sign=1; else sign=-1;
+    }
+    else
+    { ta=-mb; tb=-ma; sign=1;
+    }
+    k=ta*(ta+1)+tb;
+    e=buf?buf[al*lamdum+k]:st_rotbelem(beta,al,k);
+    if (sign>=0) element=e;
+    else element=-e;
+    ta=0; tb=iabs(mb);
+    if ((ta==0)&&(tb<2)) k=tb;
+    else if ((ta==1)&&(tb<2)) k=tb+2;
+    else if ((ta<2)&&(tb==2)) k=ta+4;
+    else if ((ta==2)&&(tb<3)) k=tb+6;
+    else if ((ta<3)&&(tb==3)) k=ta+9;
+    else if ((ta==3)&&(tb<4)) k=tb+12;
+    else if ((ta<4)&&(tb==4)) k=ta+16;
+    else k=tb+20;
+    element*=rotmatc[al*lamdum+k]/(float)sqrt(al+al+1.0);
+  }
+  return (element);
+}
+
+void Rotamat::st_setrotb(float beta,const float *buf)
+{ int k;
+  pbeta=beta;
+  for (k=0;k<lnum*lamdum;++k) rotmatb[k]=buf[k];
+}
+
 //beta unit: degree
 float Rotamat::rotelem(int al,int ma,int mb,float beta)
 { int k,ta,tb,sign;

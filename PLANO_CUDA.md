@@ -36,6 +36,35 @@ alguém.**
 
 ## COMO CONTINUAR
 
+**Estado em 09/10/2026.** Depois da Fase 5 veio a Fase 6, uma varredura do
+código inteiro (`OTIMIZACAO.md`, seção "Fase 6, varredura"). Com 963 átomos o
+tempo foi de 310 s para 15,5 s. A GPU passou a calcular só as posições que o
+`summation` lê (0,9% das matrizes `natoms²`), e o `pathcut` desce só as linhas
+usadas do `tevendim`.
+
+**Estado em 08/10/2026 (máquina nova).** Fases 0 a 3 feitas, e a **Fase 5**
+(`OTIMIZACAO.md`, seção "Fase 5", etapas 5a a 5m) reescreveu o `summation` da
+placa, levou o `pathcut` para a GPU, paralelizou o bloco final, o
+`alltrievent` e a dedup do `symtrivert` (o Reanalyzing deixou de ser uma
+passada sobre os trios) e encadeou as chamadas. No `1x2iron.in` (367 átomos,
+`np=1`) o tempo foi de **450,7 s para 16 a 26 s** conforme a carga da máquina,
+e no `Cov0.txt` de 33,8 s para 5 a 10 s, com a saída **bit a bit igual** à do
+binário de GPU anterior nos dois. A placa passou de <1% para 80 a 84% de uso
+no laço. O comando de produção passou a ser **`np=1`**, que usa os núcleos
+por OpenMP e a placa sem disputa.
+
+```bash
+MSCD_GPU=1 mpirun --use-hwthread-cpus --bind-to none -np 1 randmscd_gpu Cov0.txt
+MSCD_GPUPROF=1 ...        # tempo por trecho do summation, em ms acumulados
+MSCD_FINALSERIAL=1 ...    # bloco final serial, para comparar com o paralelo
+```
+
+O que ficou para depois, com o motivo, está no fim da seção "Fase 5" do
+`OTIMIZACAO.md`. O preparo serial (~24 s com a máquina carregada) virou metade
+do tempo total.
+
+**O texto abaixo é de 05/08/2026 e foi mantido como registro.**
+
 **Fases 0, 1 e 2 estão FEITAS e validadas (05/08/2026).**
 O tempo `np=1` que estava em 59,84 s (Fase 1) subiu para 66,19 s na Fase 2 (medido a frio). Isso era esperado devido ao leve aumento do tráfego PCIe para alimentar a Fase 3 no CPU.
 

@@ -77,6 +77,18 @@ class Hankel
     int gpu_ndata() const { return ndata; }
     int gpu_lnum() const { return lnum; }
     int gpu_cmnum() const { return cmnum; }
+    /* Bloco final em paralelo (08/10/2026): o cache de fhankelfac (tolerancia
+       1e-3 no argumento) vira estado explicito. Copia literal das contas. */
+    float st_argument() const { return argument; }
+    int st_argsize() const { return lnum*cmnum; }
+    int st_error() const { return error; }
+    void st_copyarg(Fcomplex *buf) const;
+    void st_fillarg(float invkx,Fcomplex *buf) const;
+    Fcomplex st_fhankelfacb(int al,int am,const Fcomplex *buf) const;
+    void st_setarg(float invkx,const Fcomplex *buf);
+    /* st_fhankelfacb com buf, ou com o elemento calculado na hora */
+    Fcomplex st_fhankelfacv(int al,int am,const Fcomplex *buf,
+      float invkx) const;
 };
 
 class Expix

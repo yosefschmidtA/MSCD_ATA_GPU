@@ -99,9 +99,11 @@ int Mscdrun::summation(float akin,float *xdetec,float *polaron,
 
   ali=linitial;
 #ifdef MSCDGPU
-  if (getenv("MSCD_GPU")) {
+  static int gpusum=-1;
+  if (gpusum<0) gpusum=getenv("MSCD_GPU")?1:0;
+  if (gpusum) {
     MSCDT_AMARK;
-    error = mscdgpu_summation(akin, (const Gcplx*)tevenelem, (Gcplx*)asum, patom);
+    error = mscdgpu_summation_launch(akin, (const Gcplx*)tevenelem);
     MSCDT_A(4,"summation: laco de m (gpu)");
   } else {
 #endif
@@ -193,6 +195,20 @@ int Mscdrun::summation(float akin,float *xdetec,float *polaron,
   MSCDT_A(4,"summation: laco de m (serie)");
 #ifdef MSCDGPU
   }
+  if (gpusum)
+  { /* Sobreposicao CPU x GPU (08/10/2026). O onevenemit nao le asum, entao
+       roda enquanto a placa faz o laco de m (passe A, sumgpu_cpua). Depois
+       do finish, as mesmas somas na mesma ordem (passe B, sumgpu_passb).
+       Bit a bit igual. */
+    MSCDT_AMARK;
+    error=sumgpu_cpua(akin,xdetec,polaron,csum,0);
+    MSCDT_A(5,"summation: bloco final (onevenemit)");
+    if (error==0) error=mscdgpu_summation_finish((Gcplx*)asum);
+    MSCDT_A(6,"summation: espera da placa");
+    if (error==0) error=sumgpu_passb(0,suminten,bakinten,asum);
+    MSCDT_A(7,"summation: somas finais");
+    return(error);
+  }
 #endif
 
   for (ia=0;ia<natoms;++ia)
@@ -223,6 +239,115 @@ int Mscdrun::summation(float akin,float *xdetec,float *polaron,
 
   return(error);
 } //end of Mscdrun::summation
+
+
+#ifdef MSCDGPU
+/* ---- as duas metades do bloco final, com dois conjuntos de buffers ----
+   08/10/2026. Separadas para o laco encadeado do intensity(): o passe A de
+   uma chamada roda enquanto a placa faz a mesma chamada, e o passe B so'
+   depois, possivelmente com a chamada seguinte ja' lancada. */
+static Fcomplex *g_ebuf[2]={NULL,NULL},*g_cbuf[2]={NULL,NULL};
+static long g_ecap[2]={0,0},g_ccap[2]={0,0};
+
+int Mscdrun::sumgpu_cpua(float akin,float *xdetec,float *polaron,
+  Fcomplex *csum,int set)
+{ int ia,ib,j,m,am,alf,ali;
+  float emiter;
+  Fcomplex cxb,cxc;
+  long ne=0,nc=0,q,r;
+
+  ali=linitial;
+  for (ia=0;ia<natoms;++ia)
+  { if (patom[ia*12+7]==0) continue;
+    for (am=-ali;am<=ali;++am)
+      for (alf=ali-1;alf<=ali+1;alf+=2) { nc+=2; ne+=natoms; }
+  }
+  if (ne*radim>g_ecap[set])
+  { if (g_ebuf[set]) delete [] g_ebuf[set];
+    g_ecap[set]=ne*radim; g_ebuf[set]=new Fcomplex [g_ecap[set]];
+  }
+  if (nc>g_ccap[set])
+  { if (g_cbuf[set]) delete [] g_cbuf[set];
+    g_ccap[set]=nc; g_cbuf[set]=new Fcomplex [g_ccap[set]];
+  }
+  Fcomplex *ebuf=g_ebuf[set],*cbuf=g_cbuf[set];
+  static int fserial=-1;
+  if (fserial<0) fserial=getenv("MSCD_FINALSERIAL")?1:0;
+  if (!fserial) error=finalpassa(akin,xdetec,polaron,ebuf,cbuf);
+  else
+  { /* o laco serial original, mantido para comparacao A/B */
+    q=r=0;
+    for (ia=0;ia<natoms;++ia)
+    { emiter=patom[ia*12+7];
+      if (emiter==0) continue;
+      for (am=-ali;am<=ali;++am)
+      { m=am+ali+1;
+        for (alf=ali-1;alf<=ali+1;alf+=2)
+        { if ((alf<0)||(am<-alf)||(am>alf)||((finals==1)&&(alf==ali-1))||
+            ((finals==2)&&(alf==ali+1))) continue;
+          for (ib=0;ib<natoms;++ib)
+          { if ((msorder<1)||(finals==3)||(ib==ia)) continue;
+            error=onevenemit(ia,ib,alf,am,akin,xdetec,polaron,csum);
+            for (j=0;j<radim;++j) ebuf[q*radim+j]=csum[j];
+            ++q;
+          }
+          if (finals==4) cxb=0.0f;
+          else cxb=onemidetec(akin,ia,alf,am,xdetec,polaron);
+          cxc=matrixelement(ali,alf,am,akin);
+          cbuf[r++]=cxb; cbuf[r++]=cxc;
+        }
+      }
+    }
+    (void)m;
+  }
+  return(error);
+}
+
+int Mscdrun::sumgpu_passb(int set,float *suminten,float *bakinten,
+  Fcomplex *asum)
+{ int ia,ib,j,id,am,alf,ali;
+  float emiter;
+  Fcomplex cxa,cxb,cxc,dsum,esum;
+  long q,r;
+  Fcomplex *ebuf=g_ebuf[set],*cbuf=g_cbuf[set];
+
+  ali=linitial;
+  q=r=0;
+  for (ia=0;ia<natoms;++ia)
+  { emiter=patom[ia*12+7];
+    if (emiter==0) continue;
+    for (am=-ali;am<=ali;++am)
+    { dsum=esum=0.0f;
+      for (alf=ali-1;alf<=ali+1;alf+=2)
+      { if ((alf<0)||(am<-alf)||(am>alf)||((finals==1)&&(alf==ali-1))||
+          ((finals==2)&&(alf==ali+1))) continue;
+        /* as contas de Fcomplex::operator* e operator+= escritas aqui, com as
+           mesmas expressoes: os operadores ficam em fcomplex.cpp e nao podiam
+           ser expandidos, e cada um era uma chamada de funcao (Fase 6) */
+        { float sre=0.0f,sim=0.0f;
+          const Gcplx *A=(const Gcplx *)asum,*Eb=(const Gcplx *)ebuf;
+          for (ib=0;ib<natoms;++ib)
+          { if ((msorder<1)||(finals==3)||(ib==ia)) continue;
+            id=ia*natoms*radim+ib*radim;
+            for (j=0;j<radim;++j)
+            { Gcplx a_=A[id+j],e_=Eb[q*radim+j];
+              float tr=a_.re*e_.re-a_.im*e_.im;
+              float ti=a_.re*e_.im+a_.im*e_.re;
+              sre+=tr; sim+=ti;
+            }
+            ++q;
+          }
+          cxa=Fcomplex(sre,sim);
+        }
+        cxb=cbuf[r++]; cxc=cbuf[r++];
+        dsum+=cxa*cxc; esum+=cxb*cxc;
+      }
+      *suminten+=emiter*norm(dsum+esum); *bakinten+=emiter*norm(esum);
+    }
+  }
+  return(error);
+}
+#endif
 
 int Mscdrun::intensity(int afitmath,float *afit,float *xdata,
   float *ydata,float *ymod)
@@ -295,6 +420,88 @@ int Mscdrun::intensity(int afitmath,float *afit,float *xdata,
   }
 
   bkout=akin=0.0f; k=scanuni=0;
+#ifdef MSCDGPU
+  /* Laco encadeado (08/10/2026). Para cada chamada c (ponto, direcao k):
+       lanca a placa para c -> termina e soma c-1 -> passe A de c na CPU.
+     A placa recebe c antes de c-1 terminar, entao nao fica parada nas somas
+     finais nem na preparacao da chamada seguinte. Quem mexe nos caches com
+     historia (o passe A e o reset do hankb no k==0) roda na mesma ordem do
+     laco original, e as somas de cada ponto tambem. MSCD_NOPIPE=1 desliga. */
+  static int pipe=-1;
+  if (pipe<0)
+  { const char *s=getenv("MSCD_GPU");
+    pipe=((s)&&(strcmp(s,"validate")!=0)&&(atoi(s)!=0)&&(msorder>1)&&
+      (!getenv("MSCD_NOPIPE"))&&(!getenv("MSCD_GPUPROF")))?1:0;
+#ifdef MSCDTIMER
+    pipe=0;
+#endif
+  }
+  if (pipe)
+  { struct Pst { int i,j; float akout,adtheta,adphi,altheta,alphi,ya,sum,bak; };
+    Pst ps[2];
+    int cur=0,pend=0,pslot=0,pset=0,pk=0,ppt=0,pnk=1,set=0,nk,slot;
+    for (i=pdbeg;(error==0)&&(i<=pdend);++i)
+    { if (i<pdend)
+      { j=pdnum[i];
+        error=pdintensity->getpoint(j,&akout,&adtheta,&adphi,&altheta,
+          &alphi,&xa,&xb,&xc,&ya);
+        if (i==pdbeg) bkout=akout+1.0f;
+        if ((error==0)&&(bkout!=akout))
+        { bkout=akout; akin=kinside(akout,vinner);
+          error=alltrievent(0,akin);
+        }
+        cur=i&1;
+        ps[cur].i=i; ps[cur].j=j; ps[cur].akout=akout;
+        ps[cur].adtheta=adtheta; ps[cur].adphi=adphi;
+        ps[cur].altheta=altheta; ps[cur].alphi=alphi; ps[cur].ya=ya;
+        ps[cur].sum=ps[cur].bak=0.0f;
+        nk=(accepang<1.0e-3)?1:5;
+      }
+      else nk=1;
+      for (k=0;(error==0)&&(k<nk);++k)
+      { if (i<pdend)
+        { thetainside(k,akin,akout,adtheta,adphi,altheta,alphi,xdetec,
+            polaron);
+          if (k==0) error=gpudblevent(akin,xdetec,0);
+          if (error==0) error=gpuevendetec(akin,xdetec,0);
+          if (error==0) error=mscdgpu_summation_launch2(akin,
+            (const Gcplx*)tevenelem,&slot);
+        }
+        if ((error==0)&&pend)
+        { /* termina e soma a chamada anterior, no ponto dela */
+          Pst *pp=&ps[ppt];
+          error=mscdgpu_summation_finish2(pslot,(Gcplx*)asum);
+          if (error==0) error=sumgpu_passb(pset,&pp->sum,&pp->bak,asum);
+          if ((pk==0)&&(accepang>=1.0e-3))
+          { pp->sum+=pp->sum; pp->bak+=pp->bak;
+          }
+          if (pk==pnk-1)
+          { /* ultima chamada do ponto: o fim do laco original */
+            float s_=pp->sum,b_=pp->bak;
+            if ((error==0)&&(pnk>1))
+            { s_/=float(pnk+1.0); b_/=float(pnk+1.0);
+            }
+            if (b_<1.0e-10) netinten=0.0f;
+            else netinten=s_/b_-1.0f;
+            if (netinten>10.0) netinten=10.0f;
+            else if (netinten<-10.0) netinten=-10.0f;
+            if (error==0) error=pdintensity->loadpoint(pp->j,pp->akout,
+              pp->adtheta,pp->adphi,pp->altheta,pp->alphi,s_,b_,netinten,
+              pp->ya);
+            if ((error==0)&&(mype==0)) error=dispintensity(4,pp->i,0,0.0f,
+              0.0f,pp->akout,pp->adtheta,pp->adphi,s_);
+          }
+          pend=0;
+        }
+        if ((error==0)&&(i<pdend))
+        { error=sumgpu_cpua(akin,xdetec,polaron,csum,set);
+          pend=1; pslot=slot; pset=set; pk=k; ppt=cur; pnk=nk; set^=1;
+        }
+      }
+    }
+  }
+  else
+#endif
   for (i=pdbeg;(error==0)&&(i<pdend);++i)
   { j=pdnum[i];
     error=pdintensity->getpoint(j,&akout,&adtheta,&adphi,&altheta,
@@ -302,7 +509,9 @@ int Mscdrun::intensity(int afitmath,float *afit,float *xdata,
     if (i==pdbeg) bkout=akout+1.0f;
     if ((error==0)&&(bkout!=akout))
     { bkout=akout; akin=kinside(akout,vinner);
+      MSCDT_DECL;
       error=alltrievent(0,akin);
+      MSCDT("  alltrievent(0) do laco");
     }
     suminten=bakinten=0.0f;
     for (k=0;(error==0)&&(k<5);++k)
@@ -322,7 +531,12 @@ int Mscdrun::intensity(int afitmath,float *afit,float *xdata,
       }
       if (k==0)
       { 
-        if (mode==1) error=gpudblevent(akin,xdetec,0);
+        if (mode==1)
+        { error=gpudblevent(akin,xdetec,0);
+#ifdef MSCDTIMER
+          mscdgpu_sync();
+#endif
+        }
         else
         { error=alldblevent(akin,xdetec);
           if ((mode==2)&&(error==0)) error=gpudblevent(akin,xdetec,1);
@@ -332,6 +546,9 @@ int Mscdrun::intensity(int afitmath,float *afit,float *xdata,
 
       if (mode==1) {
         if (error==0) error=gpuevendetec(akin,xdetec,0);
+#ifdef MSCDTIMER
+        mscdgpu_sync();
+#endif
       } else {
         if (error==0) error=allevendetec(akin,xdetec);
         if ((mode==2)&&(error==0)) error=gpuevendetec(akin,xdetec,1);
